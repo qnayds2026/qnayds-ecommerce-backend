@@ -1,0 +1,11 @@
+process.env.NODE_ENV = "test";
+process.env.JWT_ACCESS_SECRET = "test-secret-test-secret-test-secret";
+process.env.JWT_ACCESS_EXPIRES_IN = "15m";
+process.env.REFRESH_TOKEN_EXPIRES_DAYS = "30";
+process.env.REFRESH_COOKIE_NAME = "refresh_token";
+process.env.BCRYPT_ROUNDS = "4"; // fast hashing in tests
+process.env.COOKIE_SECURE = "false";
+process.env.COOKIE_SAMESITE = "lax";
+process.env.COOKIE_DOMAIN = "";
+process.env.CORS_ALLOWED_ORIGINS = "http://localhost:3000";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
