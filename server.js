@@ -1,16 +1,39 @@
+require("dotenv").config();
+
 const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const { connectDatabase } = require("./src/config/db");
+
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Middleware to parse incoming JSON payloads
+// Middleware
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(helmet());
+app.use(cors());
 
-// A test route
+// Test route
 app.get("/", (req, res) => {
-  res.json({ message: "Backend server is running smoothly!" });
+  res.json({
+    success: true,
+    message: "Backend server is running smoothly!",
+  });
 });
 
-// Start listening for requests
-app.listen(PORT, () => {
-  console.log(`Server is operating on http://localhost:${PORT}`);
-});
+const PORT = process.env.PORT || 5000;
+
+async function startServer() {
+  try {
+    await connectDatabase();
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running at http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Server startup failed:", error.message);
+    process.exitCode = 1;
+  }
+}
+
+startServer();
