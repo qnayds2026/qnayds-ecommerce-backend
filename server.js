@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 
 const express = require("express");
 const cors = require("cors");
@@ -15,6 +15,9 @@ const productRoutes = require("./src/routes/product.routes");
 const variantRoutes = require("./src/routes/variant.routes");
 const imageRoutes = require("./src/routes/image.routes");
 const inventoryRoutes = require("./src/routes/inventory.routes");
+const cartRoutes = require("./src/routes/cart.routes");
+const wishlistRoutes = require("./src/routes/wishlist.routes");
+const addressRoutes = require("./src/routes/addresses.routes");
 const {
   errorHandler,
   notFoundHandler,
@@ -53,7 +56,9 @@ app.use("/api/v1/products", productRoutes);
 app.use("/api/v1", variantRoutes);
 app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
-
+app.use("/api/v1/cart", cartRoutes);
+app.use("/api/v1/wishlist", wishlistRoutes);
+app.use("/api/v1/addresses", addressRoutes);
 // Must be after all routes
 app.use(notFoundHandler);
 app.use(errorHandler);
