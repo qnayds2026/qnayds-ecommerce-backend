@@ -18,11 +18,13 @@ const baseFields = {
   city: trimmed(2, 100, 'City'),
   state: trimmed(2, 100, 'State'),
   postalCode,
-  country: z.string().trim().min(2).max(100).default('India'),
+  country: z.string().trim().min(2).max(100),
   isDefault: z.boolean().optional(),
 };
 
-const createAddressSchema = z.object(baseFields).strict();
+const createAddressSchema = z
+  .object({ ...baseFields, country: baseFields.country.default('India') })
+  .strict();
 
 const updateAddressSchema = z
   .object(baseFields)
