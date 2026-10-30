@@ -17,6 +17,7 @@ const imageRoutes = require("./src/routes/image.routes");
 const inventoryRoutes = require("./src/routes/inventory.routes");
 const cartRoutes = require("./src/routes/cart.routes");
 const wishlistRoutes = require("./src/routes/wishlist.routes");
+const addressRoutes = require("./src/routes/addresses.routes");
 const {
   errorHandler,
   notFoundHandler,
@@ -57,6 +58,7 @@ app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
+app.use("/api/v1/addresses", addressRoutes);
 // Must be after all routes
 app.use(notFoundHandler);
 app.use(errorHandler);
