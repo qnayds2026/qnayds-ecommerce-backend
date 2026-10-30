@@ -1,6 +1,6 @@
 const router = require("express").Router();
 const validate = require("../middilewares/validateRequest");
-const { authenticate } = require("../middilewares/auth");
+const authenticate = require("../middilewares/authenticate");
 const c = require("../controllers/product.controller");
 const v = require("../validations/product.validation");
 
