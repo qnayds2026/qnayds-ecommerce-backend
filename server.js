@@ -15,6 +15,7 @@ const productRoutes = require("./src/routes/product.routes");
 const variantRoutes = require("./src/routes/variant.routes");
 const imageRoutes = require("./src/routes/image.routes");
 const inventoryRoutes = require("./src/routes/inventory.routes");
+const cartRoutes = require("./src/routes/cart.routes");
 const {
   errorHandler,
   notFoundHandler,
@@ -53,6 +54,7 @@ app.use("/api/v1/products", productRoutes);
 app.use("/api/v1", variantRoutes);
 app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
+app.use("/api/v1/cart", cartRoutes);
 
 // Must be after all routes
 app.use(notFoundHandler);
