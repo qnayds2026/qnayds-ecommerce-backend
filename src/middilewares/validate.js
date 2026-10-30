@@ -1,26 +1,44 @@
-const ApiError = require("../utils/ApiError");
+// Zod validation wrapper.
+//
+// Usage in routes:
+//   router.post("/register", validate({ body: registerSchema }), controller.register);
+//
+// Parsed (and normalized) values are available as req.validated.body / .query /
+// .params. req.body is also replaced with the parsed body for convenience.
+// Query and params are not reassigned on req because newer Express versions
+// make req.query read-only.
 
-// Usage: validate({ body: schema, query: schema, params: schema })
-const validate = (schemas) => (req, res, next) => {
+const validate = (schemas = {}) => (req, res, next) => {
   const validated = {};
+  const errors = [];
 
-  for (const key of ["params", "query", "body"]) {
-    if (!schemas[key]) continue;
+  for (const key of ["body", "query", "params"]) {
+    const schema = schemas[key];
+    if (!schema) continue;
 
-    const result = schemas[key].safeParse(req[key]);
+    const result = schema.safeParse(req[key] ?? {});
+
     if (!result.success) {
-      const details = result.error.issues.map((i) => ({
-        field: i.path.join("."),
-        message: i.message,
-      }));
-      return next(ApiError.badRequest("Validation failed", details));
+      for (const issue of result.error.issues) {
+        errors.push({
+          location: key,
+          path: issue.path.join("."),
+          message: issue.message,
+        });
+      }
+    } else {
+      validated[key] = result.data;
     }
-    validated[key] = result.data;
   }
 
-  // req.query chilappol read-only aanu (Express 5), athukondu separate-aayi vekkunnu
+  if (errors.length > 0) {
+    return res.status(400).json({ message: "Validation failed", errors });
+  }
+
   req.validated = validated;
-  next();
+  if (validated.body) req.body = validated.body;
+
+  return next();
 };
 
 module.exports = validate;
