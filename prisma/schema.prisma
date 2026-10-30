@@ -36,6 +36,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   sellerProfile SellerProfile?
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -143,4 +144,20 @@ model Inventory {
   variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
 
   @@map("inventory")
+}
+model RefreshToken {
+  id           String    @id @default(cuid())
+  tokenHash    String    @unique
+  userId       String
+  familyId     String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
 }
