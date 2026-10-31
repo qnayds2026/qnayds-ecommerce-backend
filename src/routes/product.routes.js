@@ -6,7 +6,7 @@ const c = require("../controllers/product.controller");
 const v = require("../validations/product.validation");
 
 router.get("/", validate({ query: v.listProductsQuery }), c.list);
-router.get("/mine", authenticate, authorize('CUSTOMER'), c.listMine); // "/:id"-inu mumbu aayirikkanam
+router.get("/mine", authenticate, authorize("SELLER", "ADMIN"), c.listMine); 
 router.get("/:id", validate({ params: v.idParam }), c.getOne);
 
 router.post("/", authenticate, authorize("SELLER", "ADMIN"), validate({ body: v.createProductBody }), c.create);
