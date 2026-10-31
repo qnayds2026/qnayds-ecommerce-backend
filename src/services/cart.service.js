@@ -58,7 +58,7 @@ function buildCartView(cart) {
       lineTotal,
       availableStock: available,
       issues,
-      product: { id: p.id, name: p.name, image: p.images?.[0]?.url ?? null },
+      product: { id: p.id, name: p.name, image: p.images?.[0]?.url ?? null, sellerId: p.sellerId },
       variant: { id: v.id, sku: v.sku, name: v.name },
     };
   });
