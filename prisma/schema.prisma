@@ -36,23 +36,23 @@ enum OrderStatus {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  name         String?
-  email        String   @unique
-  passwordHash String
-  role         UserRole @default(CUSTOMER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String?
+  email         String   @unique
+  passwordHash  String
+  role          UserRole @default(CUSTOMER)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-   sellerProfile SellerProfile?
+  sellerProfile SellerProfile?
   refreshTokens RefreshToken[]
   orders        Order[]
   cart          Cart?
+  wishlistItems WishlistItem[]
   addresses     Address[]
 
   @@map("users")
 }
-
 model SellerProfile {
   id          String       @id @default(cuid())
   userId      String       @unique
@@ -132,6 +132,7 @@ model Product {
   category Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   variants ProductVariant[]
   images   ProductImage[]
+  wishlistItems WishlistItem[]
 
   @@index([sellerId, status])
   @@index([categoryId, status])
@@ -203,6 +204,7 @@ model RefreshToken {
   @@index([familyId])
   @@map("refresh_tokens")
 }
+
 
 model Order {
   id             String      @id @default(cuid())
@@ -321,6 +323,20 @@ model CartItem {
   @@map("cart_items")
 }
 
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, productId])
+  @@index([productId])
+  @@map("wishlist_items")
+}
+
 model Address {
   id            String   @id @default(cuid())
   userId        String
@@ -340,4 +356,6 @@ model Address {
 
   @@index([userId, isDefault])
   @@map("addresses")
+
 }
+
