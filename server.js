@@ -1,5 +1,5 @@
 require("dotenv").config();
-
+const ordersRoutes = require("./src/modules/orders/orders.routes");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -53,6 +53,7 @@ app.use("/api/v1/products", productRoutes);
 app.use("/api/v1", variantRoutes);
 app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
+app.use("/api/v1", ordersRoutes);
 
 // Must be after all routes
 app.use(notFoundHandler);

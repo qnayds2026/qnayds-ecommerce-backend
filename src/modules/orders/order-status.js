@@ -1,0 +1,48 @@
+
+const ORDER_STATUS = Object.freeze({
+  PENDING_PAYMENT: "PENDING_PAYMENT",
+  CONFIRMED: "CONFIRMED",
+  PROCESSING: "PROCESSING",
+  SHIPPED: "SHIPPED",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED",
+  REFUNDED: "REFUNDED",
+});
+
+const ORDER_STATUS_VALUES = Object.values(ORDER_STATUS);
+
+const ORDER_STATUS_TRANSITIONS = Object.freeze({
+  PENDING_PAYMENT: [
+    ORDER_STATUS.CONFIRMED,
+    ORDER_STATUS.CANCELLED,
+  ],
+  CONFIRMED: [
+    ORDER_STATUS.PROCESSING,
+    ORDER_STATUS.CANCELLED,
+  ],
+  PROCESSING: [
+    ORDER_STATUS.SHIPPED,
+    ORDER_STATUS.CANCELLED,
+  ],
+  SHIPPED: [
+    ORDER_STATUS.DELIVERED,
+  ],
+  DELIVERED: [
+    ORDER_STATUS.REFUNDED,
+  ],
+  CANCELLED: [],
+  REFUNDED: [],
+});
+
+function canTransitionOrderStatus(currentStatus, newStatus) {
+  return (
+    ORDER_STATUS_TRANSITIONS[currentStatus]?.includes(newStatus) ?? false
+  );
+}
+
+module.exports = {
+  ORDER_STATUS,
+  ORDER_STATUS_VALUES,
+  ORDER_STATUS_TRANSITIONS,
+  canTransitionOrderStatus,
+};
