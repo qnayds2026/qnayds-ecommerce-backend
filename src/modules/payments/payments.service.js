@@ -83,6 +83,40 @@ async function startPaymentForOrder(order) {
   return createAttempt(order);
 }
 
+// COD: no gateway order. One PENDING row with method COD; the same order reuses it.
+async function startCodPaymentForOrder(order) {
+  if (order.status !== "PENDING_PAYMENT") {
+    throw ApiError.conflict("Order is not awaiting payment");
+  }
+
+  const existing = await prisma.payment.findFirst({
+    where: { orderId: order.id, method: "COD" },
+  });
+  if (existing) return existing;
+
+  return prisma.payment.create({
+    data: {
+      orderId: order.id,
+      userId: order.userId,
+      amount: order.totalAmount,
+      currency: order.currency,
+      status: "PENDING",
+      method: "COD",
+    },
+  });
+}
+
+// What the frontend needs for a COD order. No Razorpay key or gateway order.
+function toCodDetails(payment) {
+  return {
+    paymentId: payment.id,
+    method: "COD",
+    amount: payment.amount,
+    currency: payment.currency,
+    status: payment.status,
+  };
+}
+
 async function createRazorpayOrder(user, { orderId }) {
   razorpay.assertConfigured();
 
@@ -93,6 +127,9 @@ async function createRazorpayOrder(user, { orderId }) {
   if (!order) throw ApiError.notFound("Order not found");
 
   const payment = await startPaymentForOrder(order);
+  if (payment.method === "COD") {
+    throw ApiError.conflict("This order is Cash on Delivery");
+  }
   return toClientDetails(payment);
 }
 
@@ -188,4 +225,6 @@ module.exports = {
   retryPayment,
   startPaymentForOrder,
   toClientDetails,
+  startCodPaymentForOrder,
+  toCodDetails,
 };

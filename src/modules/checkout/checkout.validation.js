@@ -8,6 +8,7 @@ const checkoutBody = z
       .string({ required_error: "addressId is required" })
       .trim()
       .min(1, "addressId is required"),
+    paymentMethod: z.enum(["ONLINE", "COD"]).default("ONLINE"),
   })
   .strict();
 

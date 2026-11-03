@@ -369,17 +369,22 @@ enum PaymentStatus {
   REFUND_PENDING
   REFUNDED
 }
-
+enum PaymentMethod {
+  ONLINE
+  COD
+}
 // One row per payment attempt. Retries create a new row, so failures are never overwritten.
 model Payment {
   id               String        @id @default(cuid())
   orderId          String
   userId           String
-  gatewayOrderId   String        @unique
+  gatewayOrderId   String?       @unique
   gatewayPaymentId String?
   amount           Decimal       @db.Decimal(12, 2)
   currency         String        @default("INR") @db.Char(3)
-  status           PaymentStatus @default(CREATED)
+  status           PaymentStatus @default(CREATED)  
+  method           PaymentMethod @default(ONLINE)
+
   authorizedAt     DateTime?
   capturedAt       DateTime?
   failedAt         DateTime?
