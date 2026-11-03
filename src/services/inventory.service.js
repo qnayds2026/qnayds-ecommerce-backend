@@ -21,9 +21,12 @@ async function updateInventory(user, variantId, { delta, available }) {
     });
   } else {
     result = await prisma.inventory.updateMany({
-      where: { variantId },
-      data: { quantityAvailable: available },
-    });
+  where: {
+    variantId,
+    quantityReserved: { lte: available },
+  },
+  data: { quantityAvailable: available },
+});
   }
 
   if (result.count === 0)

@@ -141,4 +141,5 @@ async function validateCartForCheckout(userId, tx = prisma) {
   return view;
 }
 
+
 module.exports = { getCart, addItem, updateItem, removeItem, clearCart, validateCartForCheckout };
