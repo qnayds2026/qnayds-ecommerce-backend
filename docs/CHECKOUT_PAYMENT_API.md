@@ -103,6 +103,22 @@ No login. The `X-Razorpay-Signature` header is verified on the raw body. Details
 `CREATED, PENDING, AUTHORIZED, CAPTURED, FAILED, REFUND_PENDING, REFUNDED`.
 Rules live in `src/modules/payments/payment-state.js`. `CAPTURED` is never downgraded by a late authorized/failed event.
 
+## Cash on Delivery (COD)
+
+`POST /api/v1/checkout` accepts an optional `paymentMethod`: `ONLINE` (default) or `COD`.
+Any other value returns `400`. Extra fields such as client totals are still rejected.
+
+Request:
+
+{ "addressId": "xxx", "paymentMethod": "COD" }
+
+- `ONLINE` (or no `paymentMethod`): unchanged. A Razorpay order is created and the response has `keyId` and `gatewayOrderId`.
+- `COD`: no Razorpay call and no Razorpay keys needed. One `Payment` row is created with `method = COD` and `status = PENDING`. The response `payment` has `paymentId`, `method`, `amount`, `currency`, `status`. It has no `keyId` and no `gatewayOrderId`, so the frontend must not open Razorpay Checkout (check `payment.method === "COD"`).
+- Calling checkout again for the same order reuses the existing COD payment row.
+- `POST /payments/razorpay/order` on a COD order returns `409`.
+- Not included yet: marking cash as collected (`PENDING` to `CAPTURED`), COD order status, stock release for undelivered COD orders. These need Team Lead / Teammate 2 decisions.
+- COD was not in the original task brief. Scope confirmation from Team Lead is pending.
+
 ## Environment variables (names only)
 
 `RAZORPAY_KEY_ID` (public), `RAZORPAY_KEY_SECRET` (backend only), `RAZORPAY_WEBHOOK_SECRET` (backend only).
@@ -110,10 +126,11 @@ Real values go in `.env` only, never committed.
 
 ## Schema
 
-Tables `payments`, `payment_refunds`, `webhook_events` are proposed in `prisma/proposed/payments_webhooks.sql` for Team Lead review. No migration was run from this branch.
+Models `Payment`, `PaymentRefund`, `WebhookEvent` are in `prisma/schema.prisma` for Team Lead review. COD adds the `PaymentMethod` enum (`ONLINE`, `COD`), `Payment.method` (default `ONLINE`), and makes `Payment.gatewayOrderId` optional. No migration has been created or applied from this branch; it waits for the migration history fix.
 
 ## Test evidence
 
-- `npx jest`: 13 suites, 168 tests pass.
+- `npx jest`: 14 suites, 176 tests pass (mocked DB and gateway). Includes 8 COD tests.
+- COD is unit-tested only. Not run against a real DB yet.
 - Covered: valid/invalid signature, duplicate webhook event, webhook before verify, amount and currency mismatch, late event no downgrade, retry keeps history, max attempts, unauthorized payment/order lookup.
 - Razorpay Test Mode end-to-end run: to be added.
