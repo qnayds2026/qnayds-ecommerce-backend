@@ -50,6 +50,7 @@ model User {
   cart          Cart?
   wishlistItems WishlistItem[]
   addresses     Address[]
+  payments      Payment[]
 
   @@map("users")
 }
@@ -234,6 +235,7 @@ model Order {
   sellerOrders         SellerOrder[]
   orderItems           OrderItem[]
   orderStatusHistories OrderStatusHistory[]
+  payments             Payment[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -357,5 +359,78 @@ model Address {
   @@index([userId, isDefault])
   @@map("addresses")
 
+}
+enum PaymentStatus {
+  CREATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUND_PENDING
+  REFUNDED
+}
+
+// One row per payment attempt. Retries create a new row, so failures are never overwritten.
+model Payment {
+  id               String        @id @default(cuid())
+  orderId          String
+  userId           String
+  gatewayOrderId   String        @unique
+  gatewayPaymentId String?
+  amount           Decimal       @db.Decimal(12, 2)
+  currency         String        @default("INR") @db.Char(3)
+  status           PaymentStatus @default(CREATED)
+  authorizedAt     DateTime?
+  capturedAt       DateTime?
+  failedAt         DateTime?
+  failureCode      String?
+  failureReason    String?
+  lastEventId      String?
+  requiresReview   Boolean       @default(false)
+  reviewReason     String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  refunds PaymentRefund[]
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([gatewayPaymentId])
+  @@map("payments")
+}
+
+model PaymentRefund {
+  id              String   @id @default(cuid())
+  paymentId       String
+  gatewayRefundId String   @unique
+  amount          Decimal  @db.Decimal(12, 2)
+  currency        String   @db.Char(3)
+  status          String
+  lastEventId     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@map("payment_refunds")
+}
+
+// Webhook idempotency + audit trail. The unique eventId stops duplicate processing.
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  provider    String    @default("RAZORPAY")
+  eventType   String
+  status      String
+  outcome     String?
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([eventType])
+  @@map("webhook_events")
 }
 
