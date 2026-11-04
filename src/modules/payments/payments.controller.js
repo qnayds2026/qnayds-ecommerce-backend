@@ -28,9 +28,15 @@ const retryPayment = handle(
   201
 );
 
+const collectCodPayment = handle((req) =>
+  paymentsService.collectCodPayment(req.user, req.params.paymentId)
+);
+
+
 module.exports = {
   createRazorpayOrder,
   verifyPayment,
   getPayment,
   retryPayment,
+  collectCodPayment,
 };

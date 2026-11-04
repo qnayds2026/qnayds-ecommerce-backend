@@ -43,4 +43,14 @@ router.post(
   controller.retryPayment
 );
 
+// Admin only: mark the cash of a delivered COD order as collected.
+router.post(
+  "/:paymentId/cod/collect",
+  sensitiveLimiter,
+  authenticate,
+  authorize("ADMIN"),
+  validate({ params: validation.paymentIdParam }),
+  controller.collectCodPayment
+);
+
 module.exports = router;

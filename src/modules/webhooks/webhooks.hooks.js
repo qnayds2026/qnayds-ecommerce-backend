@@ -1,20 +1,19 @@
 // Called INSIDE the webhook DB transaction (`tx`), so the order change commits or rolls back
 // together with the payment status change.
 
+const { confirmOrder } = require("../payments/order-confirmation");
+
 const CHANGED_BY = "system:razorpay-webhook";
 
 async function onPaymentCaptured(tx, payment) {
   const order = await tx.order.findUnique({
     where: { id: payment.orderId },
-    include: { sellerOrders: true },
+    select: { status: true },
   });
 
   if (!order) throw new Error("Order not found for captured payment");
 
-  if (order.status !== "PENDING_PAYMENT") {
-    // Already confirmed or moved on: nothing to do (idempotent).
-    if (order.status !== "CANCELLED") return;
-
+  if (order.status === "CANCELLED") {
     // Customer cancelled before the payment arrived: money was taken for a cancelled order.
     await tx.payment.update({
       where: { id: payment.id },
@@ -26,44 +25,11 @@ async function onPaymentCaptured(tx, payment) {
     return;
   }
 
-  const parent = await tx.order.updateMany({
-    where: { id: order.id, status: "PENDING_PAYMENT" },
-    data: { status: "CONFIRMED" },
+  // No-op if the order is already confirmed or has moved on (idempotent).
+  await confirmOrder(tx, payment.orderId, {
+    changedBy: CHANGED_BY,
+    note: "Payment captured",
   });
-
-  // Order changed while we were processing: throw so the transaction rolls back and Razorpay retries.
-  if (parent.count !== 1) throw new Error("Order status changed during payment confirmation");
-
-  await tx.orderStatusHistory.create({
-    data: {
-      orderId: order.id,
-      oldStatus: "PENDING_PAYMENT",
-      newStatus: "CONFIRMED",
-      changedBy: CHANGED_BY,
-      note: "Payment captured",
-    },
-  });
-
-  for (const sellerOrder of order.sellerOrders) {
-    if (sellerOrder.status !== "PENDING_PAYMENT") continue;
-
-    const updated = await tx.sellerOrder.updateMany({
-      where: { id: sellerOrder.id, status: "PENDING_PAYMENT" },
-      data: { status: "CONFIRMED" },
-    });
-    if (updated.count !== 1) throw new Error("Seller order status changed during payment confirmation");
-
-    await tx.orderStatusHistory.create({
-      data: {
-        orderId: order.id,
-        sellerOrderId: sellerOrder.id,
-        oldStatus: "PENDING_PAYMENT",
-        newStatus: "CONFIRMED",
-        changedBy: CHANGED_BY,
-        note: "Payment captured",
-      },
-    });
-  }
 
   // TODO (Team Lead): stock commit timing is undecided; reserved stock is left untouched for now.
 }

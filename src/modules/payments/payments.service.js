@@ -1,6 +1,7 @@
 const { prisma } = require("../../config/db");
 const ApiError = require("../../utils/ApiError");
 const razorpay = require("./razorpay.service");
+const { canTransition } = require("./payment-state");
 const { handlers } = require("../webhooks/razorpay.events");
 
 // Attempts that can still complete; a new attempt is not created while one of these exists.
@@ -12,6 +13,7 @@ const MIN_AMOUNT_PAISE = 100; // Razorpay minimum: 1 INR
 const PUBLIC_SELECT = {
   id: true,
   orderId: true,
+  method: true,
   status: true,
   amount: true,
   currency: true,
@@ -73,7 +75,13 @@ async function startPaymentForOrder(order) {
     where: { orderId: order.id, status: { in: OPEN_STATUSES } },
     orderBy: { createdAt: "desc" },
   });
-  if (open) return open;
+  if (open) {
+    // A pending COD row is "open" too. It must never be handed out as an online attempt.
+    if (open.method === "COD") {
+      throw ApiError.conflict("This order is Cash on Delivery");
+    }
+    return open;
+  }
 
   const attempts = await prisma.payment.count({ where: { orderId: order.id } });
   if (attempts >= MAX_ATTEMPTS) {
@@ -93,6 +101,15 @@ async function startCodPaymentForOrder(order) {
     where: { orderId: order.id, method: "COD" },
   });
   if (existing) return existing;
+
+  // An order is paid online or by COD, never both (e.g. same Idempotency-Key sent with another method).
+  const online = await prisma.payment.findFirst({
+    where: { orderId: order.id, method: "ONLINE" },
+    select: { id: true },
+  });
+  if (online) {
+    throw ApiError.conflict("This order already has an online payment");
+  }
 
   return prisma.payment.create({
     data: {
@@ -115,6 +132,45 @@ function toCodDetails(payment) {
     currency: payment.currency,
     status: payment.status,
   };
+}
+
+/**
+ * Admin marks the cash of a COD order as collected (PENDING -> CAPTURED).
+ * Allowed only once the order is DELIVERED. Idempotent: an already collected payment is returned unchanged.
+ */
+async function collectCodPayment(user, paymentId) {
+  const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) throw ApiError.notFound("Payment not found");
+
+  if (payment.method !== "COD") {
+    throw ApiError.badRequest("Only COD payments can be marked as collected");
+  }
+
+  if (payment.status === "CAPTURED") {
+    return prisma.payment.findUnique({ where: { id: payment.id }, select: PUBLIC_SELECT });
+  }
+
+  if (!canTransition(payment.status, "CAPTURED")) {
+    throw ApiError.conflict(`Payment cannot be collected from ${payment.status}`);
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: payment.orderId },
+    select: { status: true },
+  });
+  if (!order || order.status !== "DELIVERED") {
+    throw ApiError.conflict("Cash can be marked as collected only after the order is delivered");
+  }
+
+  const updated = await prisma.payment.updateMany({
+    where: { id: payment.id, method: "COD", status: payment.status },
+    data: { status: "CAPTURED", capturedAt: new Date() },
+  });
+  if (updated.count !== 1) {
+    throw ApiError.conflict("Payment status changed. Please refresh and try again.");
+  }
+
+  return prisma.payment.findUnique({ where: { id: payment.id }, select: PUBLIC_SELECT });
 }
 
 async function createRazorpayOrder(user, { orderId }) {
@@ -227,4 +283,5 @@ module.exports = {
   toClientDetails,
   startCodPaymentForOrder,
   toCodDetails,
+  collectCodPayment,
 };
