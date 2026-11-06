@@ -65,7 +65,7 @@ async function applyRefundEvent(tx, { eventId, event, refundStatus }) {
   const payment = await tx.payment.findFirst({ where: { gatewayPaymentId: entity.payment_id } });
   if (!payment) return "IGNORED_UNKNOWN_PAYMENT";
 
-  await tx.paymentRefund.upsert({
+  const refundRow = await tx.paymentRefund.upsert({
     where: { gatewayRefundId: entity.id },
     create: {
       paymentId: payment.id,
@@ -76,7 +76,10 @@ async function applyRefundEvent(tx, { eventId, event, refundStatus }) {
       lastEventId: eventId,
     },
     update: { status: refundStatus, lastEventId: eventId },
+    
   });
+  
+  await hooks.onRefundEvent(tx, { refundRow, refundStatus, notes: entity.notes });
 
   const sums = await tx.paymentRefund.groupBy({
     by: ["status"],

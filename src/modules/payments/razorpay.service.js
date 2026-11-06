@@ -45,6 +45,28 @@ function fetchGatewayPayment(gatewayPaymentId) {
   return getClient().payments.fetch(gatewayPaymentId);
 }
 
+// Refund against a captured payment. Amount is in paise.
+// receipt/notes only help us trace the refund back to the return in the Razorpay dashboard.
+function createGatewayRefund({ gatewayPaymentId, amountPaise, receipt, notes }) {
+  return getClient().payments.refund(gatewayPaymentId, {
+    amount: amountPaise,
+    speed: "normal",
+    receipt,
+    notes,
+  });
+}
+
+// Looks at the refunds Razorpay already has for this payment and returns the one made for this
+// return (notes.returnId), unless it failed. Used before creating a refund, so a retry after a
+// timeout reuses the existing refund instead of creating a second one.
+async function findGatewayRefundForReturn(gatewayPaymentId, returnId) {
+  const result = await getClient().payments.fetchMultipleRefund(gatewayPaymentId, { count: 100 });
+  const items = (result && result.items) || [];
+  return (
+    items.find((r) => r.notes && r.notes.returnId === returnId && r.status !== "failed") || null
+  );
+}
+
 // Checkout signature: HMAC-SHA256(`${order_id}|${payment_id}`, KEY_SECRET), hex.
 function verifyPaymentSignature({ gatewayOrderId, gatewayPaymentId, signature }) {
   const secret = process.env.RAZORPAY_KEY_SECRET;
@@ -68,5 +90,7 @@ module.exports = {
   toPaise,
   createGatewayOrder,
   fetchGatewayPayment,
+  createGatewayRefund,
+  findGatewayRefundForReturn,
   verifyPaymentSignature,
 };

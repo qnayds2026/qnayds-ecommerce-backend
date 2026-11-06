@@ -86,4 +86,64 @@ async function onPaymentRefunded(tx, payment) {
   }
 }
 
-module.exports = { onPaymentCaptured, onPaymentFailed, onPaymentRefunded };
+// Keeps a return in step with its Razorpay refund. Only the gateway can make a return REFUNDED.
+async function onRefundEvent(tx, { refundRow, refundStatus, notes }) {
+  const returnId = notes && notes.returnId;
+  const ret = await tx.returnRequest.findFirst({
+    where: {
+      OR: [{ paymentRefundId: refundRow.id }, ...(returnId ? [{ id: returnId }] : [])],
+    },
+  });
+  if (!ret) return; // a refund that is not for a return
+
+  // A late event of an older, failed refund attempt must not change a retried return.
+  if (ret.paymentRefundId && ret.paymentRefundId !== refundRow.id) return;
+
+  if (!ret.paymentRefundId) {
+    await tx.returnRequest.update({
+      where: { id: ret.id },
+      data: { paymentRefundId: refundRow.id },
+    });
+  }
+
+  if (refundStatus === "PROCESSED") {
+    // REFUND_FAILED is allowed too: our call may have timed out although Razorpay did refund.
+    const updated = await tx.returnRequest.updateMany({
+      where: { id: ret.id, status: { in: ["REFUND_INITIATED", "REFUND_FAILED"] } },
+      data: { status: "REFUNDED", refundedAt: new Date() },
+    });
+    if (updated.count === 1) {
+      await tx.returnStatusHistory.create({
+        data: {
+          returnId: ret.id,
+          oldStatus: ret.status,
+          newStatus: "REFUNDED",
+          changedBy: CHANGED_BY,
+          actorRole: "SYSTEM",
+          note: "Refund confirmed by payment provider",
+        },
+      });
+    }
+  }
+
+  if (refundStatus === "FAILED") {
+    const updated = await tx.returnRequest.updateMany({
+      where: { id: ret.id, status: "REFUND_INITIATED" },
+      data: { status: "REFUND_FAILED", refundIdempotencyKey: null },
+    });
+    if (updated.count === 1) {
+      await tx.returnStatusHistory.create({
+        data: {
+          returnId: ret.id,
+          oldStatus: "REFUND_INITIATED",
+          newStatus: "REFUND_FAILED",
+          changedBy: CHANGED_BY,
+          actorRole: "SYSTEM",
+          note: "Refund failed at payment provider",
+        },
+      });
+    }
+  }
+}
+
+module.exports = { onPaymentCaptured, onPaymentFailed, onPaymentRefunded, onRefundEvent };

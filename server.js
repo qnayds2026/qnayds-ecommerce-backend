@@ -22,6 +22,9 @@ const addressRoutes = require("./src/routes/addresses.routes");
 const ordersRoutes = require("./src/modules/orders/orders.routes");
 const webhookRoutes = require("./src/modules/webhooks/webhooks.routes");
 const checkoutRoutes = require("./src/modules/checkout/checkout.routes");
+const returnsRoutes = require("./src/modules/returns/returns.routes");
+const sellerReturnsRoutes = require("./src/modules/returns/returns.seller.routes");
+const adminReturnsRoutes = require("./src/modules/returns/returns.admin.routes");
 const paymentRoutes = require("./src/modules/payments/payments.routes");
 
 const {
@@ -61,6 +64,9 @@ app.get("/", (req, res) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", usersRoutes);
 app.use("/api/v1/checkout", checkoutRoutes);
+app.use("/api/v1/returns", returnsRoutes);
+app.use("/api/v1/seller/returns", sellerReturnsRoutes);
+app.use("/api/v1/admin/returns", adminReturnsRoutes);
 app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/sellers", sellerRoutes);
 app.use("/api/v1/categories", categoryRoutes);
