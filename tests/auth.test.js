@@ -123,7 +123,7 @@ describe("POST /auth/login", () => {
     expect(decoded.email).toBeUndefined();
   });
 
-  it("gives the same generic 401 for wrong password and unknown email", async () => {
+    it("gives the same generic 401 for wrong password and unknown email", async () => {
     await register();
     const wrong = await login({ email: validUser.email, password: "Wrong1234" });
     const unknown = await login({ email: "nobody@example.com", password: "Secret123" });
@@ -131,6 +131,22 @@ describe("POST /auth/login", () => {
     expect(wrong.status).toBe(401);
     expect(unknown.status).toBe(401);
     expect(wrong.body).toEqual(unknown.body);
+  });
+
+  it("rejects login for a blocked customer", async () => {
+    await register();
+
+    const user = prisma._users[0];
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { status: "BLOCKED" },
+    });
+
+    const res = await login();
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("Your account has been blocked");
   });
 
   it("returns 400 when fields are missing", async () => {
@@ -176,6 +192,22 @@ describe("POST /auth/refresh", () => {
     expect(oldRecord.replacedById).toBe(newRecord.id);
     expect(newRecord.revokedAt).toBeNull();
     expect(newRecord.familyId).toBe(oldRecord.familyId);
+  });
+
+    it("rejects refresh for a blocked customer and revokes the token family", async () => {
+    const loginRes = await registerAndLogin();
+    const cookie = getRefreshCookie(loginRes);
+
+    await prisma.user.update({
+      where: { id: prisma._users[0].id },
+      data: { status: "BLOCKED" },
+    });
+
+    const res = await refresh(cookie);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("Your account has been blocked");
+    expect(prisma._tokens.every((token) => token.revokedAt instanceof Date)).toBe(true);
   });
 
   it("returns an access token that works on /auth/me", async () => {
@@ -262,6 +294,22 @@ describe("GET /auth/me", () => {
     expect(res.status).toBe(200);
     expect(res.body.user.email).toBe(validUser.email);
     expect(res.body.user.passwordHash).toBeUndefined();
+  });
+
+  it("rejects an existing access token when the customer is blocked", async () => {
+    const loginRes = await registerAndLogin();
+
+    await prisma.user.update({
+      where: { id: prisma._users[0].id },
+      data: { status: "BLOCKED" },
+    });
+
+    const res = await request(app)
+      .get(`${AUTH}/me`)
+      .set("Authorization", bearer(loginRes.body.accessToken));
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("Your account has been blocked");
   });
 
   it("returns 401 without a token", async () => {

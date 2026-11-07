@@ -12,6 +12,11 @@ enum UserRole {
   ADMIN
 }
 
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
 enum SellerStatus {
   PENDING
   APPROVED
@@ -22,6 +27,7 @@ enum SellerStatus {
 enum ProductStatus {
   DRAFT
   ACTIVE
+  REJECTED
   ARCHIVED
 }
 
@@ -41,10 +47,15 @@ model User {
   email         String   @unique
   passwordHash  String
   role          UserRole @default(CUSTOMER)
+  status        UserStatus @default(ACTIVE)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   sellerProfile SellerProfile?
+  sellerStatusActions SellerStatusHistory[] @relation("SellerStatusHistoryAdmin")
+  productModerationActions ProductStatusHistory[] @relation("ProductStatusHistoryAdmin")
+  customerStatusHistory  CustomerStatusHistory[] @relation("CustomerStatusHistoryCustomer")
+  customerStatusActions CustomerStatusHistory[] @relation("CustomerStatusHistoryAdmin")
   refreshTokens RefreshToken[]
   orders        Order[]
   cart          Cart?
@@ -65,6 +76,7 @@ model SellerProfile {
   user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
   products     Product[]
   sellerOrders SellerOrder[]
+  statusHistory SellerStatusHistory[]
 
   @@index([status])
   @@map("seller_profiles")
@@ -133,6 +145,7 @@ model Product {
   variants ProductVariant[]
   images   ProductImage[]
   wishlistItems WishlistItem[]
+  statusHistory ProductStatusHistory[]
 
   @@index([sellerId, status])
   @@index([categoryId, status])
@@ -359,3 +372,53 @@ model Address {
 
 }
 
+model SellerStatusHistory {
+  id              String       @id @default(cuid())
+  sellerProfileId String
+  adminId         String
+  fromStatus      SellerStatus
+  toStatus        SellerStatus
+  reason          String?
+  createdAt       DateTime     @default(now())
+
+  sellerProfile SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+  admin         User          @relation("SellerStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([sellerProfileId, createdAt])
+  @@index([adminId])
+  @@map("seller_status_histories")
+}
+
+model ProductStatusHistory {
+  id        String        @id @default(cuid())
+  productId String
+  adminId   String
+  fromStatus ProductStatus
+  toStatus   ProductStatus
+  reason     String?
+  createdAt  DateTime      @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  admin   User    @relation("ProductStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([productId, createdAt])
+  @@index([adminId])
+  @@map("product_status_histories")
+}
+
+model CustomerStatusHistory {
+  id         String     @id @default(cuid())
+  customerId String
+  adminId    String
+  fromStatus UserStatus
+  toStatus   UserStatus
+  reason     String?
+  createdAt  DateTime   @default(now())
+
+  customer User @relation("CustomerStatusHistoryCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  admin    User @relation("CustomerStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([adminId])
+  @@map("customer_status_histories")
+}

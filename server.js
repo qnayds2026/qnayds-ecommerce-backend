@@ -20,6 +20,7 @@ const cartRoutes = require("./src/routes/cart.routes");
 const wishlistRoutes = require("./src/routes/wishlist.routes");
 const addressRoutes = require("./src/routes/addresses.routes");
 const ordersRoutes = require("./src/modules/orders/orders.routes");
+const adminRoutes = require("./src/modules/admin/admin.routes");
 
 const {
   errorHandler,
@@ -60,6 +61,7 @@ app.use("/api/v1", variantRoutes);
 app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
 app.use("/api/v1", ordersRoutes);
+app.use("/api/v1/admin", adminRoutes);
 
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
