@@ -6,7 +6,7 @@ const slug = z.string().trim().toLowerCase().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const createProductBody = z.object({
   categoryId: z.string().min(1),
   name: z.string().trim().min(2).max(200),
-  slug: slug.optional(), // illenkil name-il ninnu undaakkum
+  slug: slug.optional(), 
   description: z.string().trim().max(5000).optional(),
   brand: z.string().trim().max(100).optional(),
   status: z.enum(["DRAFT", "ACTIVE"]).default("DRAFT"),
