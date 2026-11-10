@@ -1,5 +1,13 @@
 const { prisma } = require("../../config/db");
 const ApiError = require("../../utils/ApiError");
+const {
+  canTransitionShippingStatus,
+  SHIPPING_STATUS,
+} = require("../shipping/shipping-status");
+
+const {
+  canTransitionOrderStatus,
+} = require("../orders/order-status");
 
 async function getDashboardSummary(query = {}) {
   const { startDate, endDate } = query;
@@ -573,6 +581,299 @@ async function getSalesReport(query = {}) {
   };
 }
 
+
+async function listAdminShipments(query = {}) {
+  const page = query.page || 1;
+  const limit = query.limit || 20;
+
+  const where = {
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.search
+      ? {
+          OR: [
+            {
+              trackingNumber: {
+                contains: query.search,
+                mode: "insensitive",
+              },
+            },
+            {
+              carrierName: {
+                contains: query.search,
+                mode: "insensitive",
+              },
+            },
+            {
+              sellerOrder: {
+                order: {
+                  orderNumber: {
+                    contains: query.search,
+                    mode: "insensitive",
+                  },
+                },
+              },
+            },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, shipments] = await Promise.all([
+    prisma.shipment.count({ where }),
+
+    prisma.shipment.findMany({
+      where,
+      include: {
+        events: {
+          orderBy: {
+            createdAt: "asc",
+          },
+        },
+        sellerOrder: {
+          include: {
+            order: true,
+            items: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+  ]);
+
+  return {
+    shipments,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+const ORDER_STATUS_RANK = {
+  PENDING_PAYMENT: 0,
+  CONFIRMED: 1,
+  PROCESSING: 2,
+  SHIPPED: 3,
+  DELIVERED: 4,
+  REFUNDED: 4,
+};
+
+async function syncAdminParentOrderStatus(tx, orderId, changedBy) {
+  const [order, sellerOrders] = await Promise.all([
+    tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true },
+    }),
+    tx.sellerOrder.findMany({
+      where: { orderId },
+      select: { status: true },
+    }),
+  ]);
+
+  if (!order || sellerOrders.length === 0) return;
+
+  const activeOrders = sellerOrders.filter(
+    (item) => item.status !== "CANCELLED"
+  );
+
+  let nextStatus;
+
+  if (activeOrders.length === 0) {
+    nextStatus = "CANCELLED";
+  } else if (
+    activeOrders.every((item) => item.status === "REFUNDED")
+  ) {
+    nextStatus = "REFUNDED";
+  } else {
+    const lowestRank = Math.min(
+      ...activeOrders.map(
+        (item) => ORDER_STATUS_RANK[item.status] ?? 0
+      )
+    );
+
+    nextStatus = Object.keys(ORDER_STATUS_RANK).find(
+      (status) => ORDER_STATUS_RANK[status] === lowestRank
+    );
+
+    if (
+      ORDER_STATUS_RANK[nextStatus] <=
+      ORDER_STATUS_RANK[order.status]
+    ) {
+      return;
+    }
+  }
+
+  if (nextStatus === order.status) return;
+
+  const result = await tx.order.updateMany({
+    where: {
+      id: orderId,
+      status: order.status,
+    },
+    data: {
+      status: nextStatus,
+    },
+  });
+
+  if (result.count !== 1) {
+    throw ApiError.conflict(
+      "Parent order status changed. Please retry."
+    );
+  }
+
+  await tx.orderStatusHistory.create({
+    data: {
+      orderId,
+      oldStatus: order.status,
+      newStatus: nextStatus,
+      changedBy,
+      note: "Automatically updated by admin shipment management",
+    },
+  });
+}
+
+async function updateAdminShipmentStatus(
+  admin,
+  shipmentId,
+  data
+) {
+  return prisma.$transaction(async (tx) => {
+    const shipment = await tx.shipment.findUnique({
+      where: {
+        id: shipmentId,
+      },
+      include: {
+        sellerOrder: true,
+      },
+    });
+
+    if (!shipment) {
+      throw ApiError.notFound("Shipment not found");
+    }
+
+    if (
+      !canTransitionShippingStatus(
+        shipment.status,
+        data.status
+      )
+    ) {
+      throw ApiError.badRequest(
+        "Invalid shipment status transition"
+      );
+    }
+
+    const sellerOrder = shipment.sellerOrder;
+
+    if (
+      [SHIPPING_STATUS.SHIPPED, SHIPPING_STATUS.DELIVERED].includes(
+        data.status
+      ) &&
+      !canTransitionOrderStatus(
+        sellerOrder.status,
+        data.status
+      )
+    ) {
+      throw ApiError.badRequest(
+        `Seller order cannot change from ${sellerOrder.status} to ${data.status}`
+      );
+    }
+
+    const updated = await tx.shipment.updateMany({
+      where: {
+        id: shipment.id,
+        status: shipment.status,
+      },
+      data: {
+        status: data.status,
+        ...(data.status === SHIPPING_STATUS.SHIPPED
+          ? { shippedAt: new Date() }
+          : {}),
+      },
+    });
+
+    if (updated.count !== 1) {
+      throw ApiError.conflict(
+        "Shipment status changed. Please refresh and try again."
+      );
+    }
+
+    await tx.shipmentEvent.create({
+      data: {
+        shipmentId: shipment.id,
+        status: data.status,
+        description: data.description ?? null,
+        source: "ADMIN",
+        actorId: admin.id,
+      },
+    });
+
+    if (
+      [SHIPPING_STATUS.SHIPPED, SHIPPING_STATUS.DELIVERED].includes(
+        data.status
+      )
+    ) {
+      const sellerOrderUpdate = await tx.sellerOrder.updateMany({
+        where: {
+          id: sellerOrder.id,
+          status: sellerOrder.status,
+        },
+        data: {
+          status: data.status,
+        },
+      });
+
+      if (sellerOrderUpdate.count !== 1) {
+        throw ApiError.conflict(
+          "Seller order status changed. Please retry."
+        );
+      }
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: sellerOrder.orderId,
+          sellerOrderId: sellerOrder.id,
+          oldStatus: sellerOrder.status,
+          newStatus: data.status,
+          changedBy: admin.id,
+          note: `Admin updated shipment status to ${data.status}`,
+        },
+      });
+
+      await syncAdminParentOrderStatus(
+        tx,
+        sellerOrder.orderId,
+        admin.id
+      );
+    }
+
+    return tx.shipment.findUnique({
+      where: {
+        id: shipment.id,
+      },
+      include: {
+        events: {
+          orderBy: {
+            createdAt: "asc",
+          },
+        },
+        sellerOrder: {
+          include: {
+            order: true,
+            items: true,
+          },
+        },
+      },
+    });
+  });
+}
+
+
 module.exports = {
   getDashboardSummary,
   listCustomers,
@@ -582,4 +883,6 @@ module.exports = {
   updateProductStatus,
   updateCustomerStatus,
   getSalesReport,
+  listAdminShipments,
+  updateAdminShipmentStatus,
 };

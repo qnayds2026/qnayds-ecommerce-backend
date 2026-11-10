@@ -411,6 +411,7 @@ async function getCustomerOrderById(user, orderId) {
   return order;
 }
 
+
 async function getCustomerOrderTracking(user, orderId) {
   const order = await prisma.order.findFirst({
     where: {
@@ -422,18 +423,51 @@ async function getCustomerOrderTracking(user, orderId) {
       orderNumber: true,
       status: true,
       createdAt: true,
+
       sellerOrders: {
         select: {
           id: true,
           status: true,
-          shipment: true,
+
+          shipment: {
+            select: {
+              id: true,
+              carrierName: true,
+              trackingNumber: true,
+              trackingUrl: true,
+              status: true,
+              shippedAt: true,
+              estimatedDeliveryAt: true,
+              createdAt: true,
+              updatedAt: true,
+
+              events: {
+                orderBy: {
+                  createdAt: "asc",
+                },
+                select: {
+                  id: true,
+                  status: true,
+                  description: true,
+                  source: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+
           statusHistory: {
-            orderBy: { createdAt: "desc" },
+            orderBy: {
+              createdAt: "desc",
+            },
           },
         },
       },
+
       orderStatusHistories: {
-        orderBy: { createdAt: "desc" },
+        orderBy: {
+          createdAt: "desc",
+        },
       },
     },
   });
@@ -444,6 +478,7 @@ async function getCustomerOrderTracking(user, orderId) {
 
   return order;
 }
+
 
 
 async function createOrder(user, body = {}, idempotencyKey) {

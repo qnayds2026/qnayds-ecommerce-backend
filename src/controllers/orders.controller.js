@@ -1,5 +1,6 @@
 const asyncHandler = require("../utils/asyncHandler");
 const service = require("../services/orders.service");
+const shippingService = require("../services/shipping.service");
 
 const listSellerOrders = asyncHandler(async (req, res) => {
   const { page, limit } = req.validated.query;
@@ -44,11 +45,10 @@ const updateSellerOrderStatus = asyncHandler(async (req, res) => {
 });
 
 const createSellerShipment = asyncHandler(async (req, res) => {
-  const data = await service.createSellerShipment(
-    req.user,
-    req.validated.params.orderId,
-    req.validated.body
-  );
+  const data = await shippingService.createShipment(req.user, {
+    ...req.validated.body,
+    sellerOrderId: req.validated.params.orderId,
+  });
 
   res.status(201).json({
     success: true,

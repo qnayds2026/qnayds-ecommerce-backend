@@ -96,6 +96,32 @@ async function updateCustomerStatus(req, res) {
   });
 }
 
+async function listShipments(req, res) {
+  const data = await adminService.listAdminShipments(
+    req.validated.query
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Shipments fetched successfully",
+    data,
+  });
+}
+
+async function updateShipmentStatus(req, res) {
+  const data = await adminService.updateAdminShipmentStatus(
+    req.user,
+    req.validated.params.shipmentId,
+    req.validated.body
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Shipment status updated successfully",
+    data,
+  });
+}
+
 module.exports = {
   getDashboard: asyncHandler(getDashboard),
   listCustomers: asyncHandler(listCustomers),
@@ -105,4 +131,6 @@ module.exports = {
   getOrderDetails: asyncHandler(getOrderDetails),
   updateCustomerStatus: asyncHandler(updateCustomerStatus),
   getSalesReport: asyncHandler(getSalesReport),
+  listShipments,
+  updateShipmentStatus,
 };

@@ -20,6 +20,9 @@ const {
   updateCustomerStatusBody,
   listAdminOrdersQuery,
   salesReportQuery,
+  listAdminShipmentsQuery,
+  adminShipmentIdParam,
+  adminUpdateShipmentStatusBody,
 } = require("./admin.validation");
 // Admin dashboard
 router.get(
@@ -150,6 +153,26 @@ validate({
     id: require("zod").z.string().trim().min(1, "Order ID is required"),
   }),
 }),  adminController.getOrderDetails
+);
+
+// Admin shipment management
+router.get(
+  "/shipments",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: listAdminShipmentsQuery }),
+  adminController.listShipments
+);
+
+router.patch(
+  "/shipments/:shipmentId/status",
+  authenticate,
+  authorize("ADMIN"),
+  validate({
+    params: adminShipmentIdParam,
+    body: adminUpdateShipmentStatusBody,
+  }),
+  adminController.updateShipmentStatus
 );
 
 router.get(

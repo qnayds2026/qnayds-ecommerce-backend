@@ -28,6 +28,12 @@ const sellerReturnsRoutes = require("./src/modules/returns/returns.seller.routes
 const adminReturnsRoutes = require("./src/modules/returns/returns.admin.routes");
 const paymentRoutes = require("./src/modules/payments/payments.routes");
 
+
+const shippingRoutes = require(
+  "./src/modules/shipping/shipping.routes"
+);
+
+
 const {
   errorHandler,
   notFoundHandler,
@@ -81,6 +87,7 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
 app.use("/api/v1/addresses", addressRoutes);
+app.use("/api/v1", shippingRoutes);
 
 // Error handlers
 app.use(notFoundHandler);
@@ -91,6 +98,10 @@ const PORT = process.env.PORT || 5000;
 async function startServer() {
   try {
     await connectDatabase();
+
+
+    app.use("/api/v1", shippingRoutes);
+
 
     app.listen(PORT, () => {
       console.log(`🚀 Server running at http://localhost:${PORT}`);
@@ -104,5 +115,6 @@ async function startServer() {
 if (require.main === module) {
   startServer();
 }
+
 
 module.exports = app;

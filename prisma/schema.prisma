@@ -31,6 +31,17 @@ enum ProductStatus {
   ARCHIVED
 }
 
+enum ShipmentStatus {
+  READY_TO_SHIP
+  PACKED
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURN_TO_ORIGIN
+}
+
 enum OrderStatus {
   PENDING_PAYMENT
   CONFIRMED
@@ -291,8 +302,14 @@ model Shipment {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+  status              ShipmentStatus @default(READY_TO_SHIP)
+  shippedAt           DateTime?
+  estimatedDeliveryAt DateTime?
 
+  sellerOrder SellerOrder     @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+  events      ShipmentEvent[]
+
+  @@index([status, updatedAt])
   @@map("shipments")
 }
 
@@ -609,4 +626,21 @@ model ReturnStatusHistory {
 
   @@index([returnId, createdAt])
   @@map("return_status_history")
+}
+
+model ShipmentEvent {
+  id              String         @id @default(cuid())
+  shipmentId      String
+  status          ShipmentStatus
+  description     String?
+  source          String         @default("SELLER")
+  actorId         String?
+  providerEventId String?        @unique
+  createdAt       DateTime       @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt])
+  @@index([status])
+  @@map("shipment_events")
 }

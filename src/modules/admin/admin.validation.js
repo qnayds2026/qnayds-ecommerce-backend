@@ -71,6 +71,40 @@ const listAdminOrdersQuery = z
     }
   );
 
+const listAdminShipmentsQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  status: z.enum([
+    "READY_TO_SHIP",
+    "PACKED",
+    "SHIPPED",
+    "IN_TRANSIT",
+    "OUT_FOR_DELIVERY",
+    "DELIVERED",
+    "DELIVERY_FAILED",
+    "RETURN_TO_ORIGIN",
+  ]).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
+const adminShipmentIdParam = z.object({
+  shipmentId: z.string().trim().min(1, "Shipment ID is required"),
+});
+
+const adminUpdateShipmentStatusBody = z.object({
+  status: z.enum([
+    "READY_TO_SHIP",
+    "PACKED",
+    "SHIPPED",
+    "IN_TRANSIT",
+    "OUT_FOR_DELIVERY",
+    "DELIVERED",
+    "DELIVERY_FAILED",
+    "RETURN_TO_ORIGIN",
+  ]),
+  description: z.string().trim().max(500).optional(),
+});
+
 const salesReportQuery = z
   .object({
     startDate: z.coerce.date().optional(),
@@ -92,5 +126,8 @@ module.exports = {
   updateProductStatusBody,
   listAdminOrdersQuery,
   updateCustomerStatusBody,
-  salesReportQuery
+  salesReportQuery,
+  listAdminShipmentsQuery,
+  adminShipmentIdParam,
+  adminUpdateShipmentStatusBody,
 };
