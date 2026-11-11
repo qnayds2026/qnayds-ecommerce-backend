@@ -41,4 +41,34 @@ async function updateCategory(id, data) {
   return prisma.category.update({ where: { id }, data });
 }
 
-module.exports = { listActiveCategories, createCategory, updateCategory };
+
+async function listAdminCategories(query) {
+  const { page, limit, isActive } = query;
+
+  const where = {
+    ...(isActive !== undefined && {
+      isActive: isActive === "true",
+    }),
+  };
+
+  const [categories, total] = await Promise.all([
+    prisma.category.findMany({
+      where,
+      orderBy: { name: "asc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.category.count({ where }),
+  ]);
+
+  return {
+    categories,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+module.exports = { listActiveCategories, listAdminCategories, createCategory, updateCategory };

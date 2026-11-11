@@ -16,6 +16,7 @@ const safeUserSelect = {
   name: true,
   email: true,
   role: true,
+  status: true,
   createdAt: true,
   updatedAt: true,
 };
@@ -53,6 +54,9 @@ const login = async ({ email, password }) => {
 
   // Same generic message for unknown email and wrong password.
   if (!user || !passwordOk) throw httpError("Invalid email or password", 401);
+  if (user.role === "CUSTOMER" && user.status === "BLOCKED") {
+  throw httpError("Your account has been blocked", 403);
+}
 
   const accessToken = tokenService.generateAccessToken(user);
   const refresh = await tokenService.issueRefreshToken(user.id);
@@ -63,6 +67,7 @@ const login = async ({ email, password }) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      status: user.status,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     },
@@ -77,10 +82,19 @@ const refresh = async (rawRefreshToken) => {
   const rotated = await tokenService.rotateRefreshToken(rawRefreshToken);
 
   const user = await prisma.user.findUnique({
-    where: { id: rotated.userId },
-    select: { id: true },
-  });
-  if (!user) throw httpError("Invalid or expired token", 401);
+  where: { id: rotated.userId },
+  select: { id: true, role: true, status: true },
+});
+
+if (!user) {
+  await tokenService.revokeRefreshToken(rotated.token);
+  throw httpError("Invalid or expired token", 401);
+}
+
+if (user.role === "CUSTOMER" && user.status === "BLOCKED") {
+  await tokenService.revokeRefreshToken(rotated.token);
+  throw httpError("Your account has been blocked", 403);
+}
 
   return {
     accessToken: tokenService.generateAccessToken(user),

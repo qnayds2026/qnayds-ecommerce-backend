@@ -5,6 +5,15 @@ const list = asyncHandler(async (req, res) => {
   res.json({ success: true, data: await service.listActiveCategories() });
 });
 
+const listAdmin = asyncHandler(async (req, res) => {
+  const data = await service.listAdminCategories(req.validated.query);
+  res.json({
+    success: true,
+    message: "Categories fetched successfully",
+    data,
+  });
+});
+
 const create = asyncHandler(async (req, res) => {
   const data = await service.createCategory(req.validated.body);
   res.status(201).json({ success: true, data });
@@ -18,4 +27,4 @@ const update = asyncHandler(async (req, res) => {
   res.json({ success: true, data });
 });
 
-module.exports = { list, create, update };
+module.exports = { list, listAdmin, create, update };

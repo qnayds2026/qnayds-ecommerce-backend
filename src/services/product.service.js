@@ -28,7 +28,7 @@ async function createProduct(user, data) {
       slug: data.slug || slugify(data.name),
       description: data.description,
       brand: data.brand,
-      status: data.status,
+      status: "DRAFT",
     },
   });
 }
@@ -82,20 +82,20 @@ async function getProductById(id) {
   return product;
 }
 
+
 async function updateProduct(user, id, data) {
   const product = await assertCanManageProduct(user, id);
 
-  if (data.categoryId) await assertCategoryActive(data.categoryId);
-
-  if (data.status === "ACTIVE") {
-    const seller = await prisma.sellerProfile.findUnique({
-      where: { id: product.sellerId },
-    });
-    if (!seller || seller.status !== "APPROVED")
-      throw ApiError.forbidden("Only approved sellers can publish products");
+  if (data.categoryId) {
+    await assertCategoryActive(data.categoryId);
   }
 
-  return prisma.product.update({ where: { id }, data });
+  // Seller cannot change product moderation status.
+  // Only Admin can approve, reject or archive products.
+  return prisma.product.update({
+    where: { id },
+    data,
+  });
 }
 
 // Hard delete illa, archive maathram (orders reference cheyyaam)

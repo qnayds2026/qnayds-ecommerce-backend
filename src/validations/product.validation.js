@@ -1,15 +1,22 @@
+
 const { z } = require("zod");
 
-const idParam = z.object({ id: z.string().min(1) });
-const slug = z.string().trim().toLowerCase().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+const idParam = z.object({
+  id: z.string().min(1),
+});
+
+const slug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 
 const createProductBody = z.object({
   categoryId: z.string().min(1),
   name: z.string().trim().min(2).max(200),
-  slug: slug.optional(), 
+  slug: slug.optional(),
   description: z.string().trim().max(5000).optional(),
   brand: z.string().trim().max(100).optional(),
-  status: z.enum(["DRAFT", "ACTIVE"]).default("DRAFT"),
 });
 
 const updateProductBody = z
@@ -19,10 +26,12 @@ const updateProductBody = z
     slug,
     description: z.string().trim().max(5000),
     brand: z.string().trim().max(100),
-    status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]),
   })
   .partial()
-  .refine((o) => Object.keys(o).length > 0, "No fields to update");
+  .refine(
+    (o) => Object.keys(o).length > 0,
+    "No fields to update"
+  );
 
 const listProductsQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),

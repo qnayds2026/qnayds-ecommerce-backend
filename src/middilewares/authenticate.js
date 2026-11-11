@@ -34,10 +34,16 @@ const authenticate = async (req, res, next) => {
         role: true,
         createdAt: true,
         updatedAt: true,
+        status: true,
       },
     });
 
     if (!user) return unauthorized(res);
+if (user.role === "CUSTOMER" && user.status === "BLOCKED") {
+  return res.status(403).json({
+    message: "Your account has been blocked",
+  });
+}
 
     req.user = user;
     return next();

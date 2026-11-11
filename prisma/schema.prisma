@@ -12,6 +12,11 @@ enum UserRole {
   ADMIN
 }
 
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
 enum SellerStatus {
   PENDING
   APPROVED
@@ -22,7 +27,19 @@ enum SellerStatus {
 enum ProductStatus {
   DRAFT
   ACTIVE
+  REJECTED
   ARCHIVED
+}
+
+enum ShipmentStatus {
+  READY_TO_SHIP
+  PACKED
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURN_TO_ORIGIN
 }
 
 enum OrderStatus {
@@ -36,25 +53,31 @@ enum OrderStatus {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  name          String?
-  email         String   @unique
-  passwordHash  String
-  role          UserRole @default(CUSTOMER)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String     @id @default(cuid())
+  name         String?
+  email        String     @unique
+  passwordHash String
+  role         UserRole   @default(CUSTOMER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
-  sellerProfile SellerProfile?
-  refreshTokens RefreshToken[]
-  orders        Order[]
-  cart          Cart?
-  wishlistItems WishlistItem[]
-  addresses     Address[]
-  payments      Payment[]
-  returnRequests ReturnRequest[]
+  sellerProfile            SellerProfile?
+  sellerStatusActions      SellerStatusHistory[]   @relation("SellerStatusHistoryAdmin")
+  productModerationActions ProductStatusHistory[]  @relation("ProductStatusHistoryAdmin")
+  customerStatusHistory    CustomerStatusHistory[] @relation("CustomerStatusHistoryCustomer")
+  customerStatusActions    CustomerStatusHistory[] @relation("CustomerStatusHistoryAdmin")
+  refreshTokens            RefreshToken[]
+  orders                   Order[]
+  cart                     Cart?
+  wishlistItems            WishlistItem[]
+  addresses                Address[]
+  payments                 Payment[]
+  returnRequests           ReturnRequest[]
 
   @@map("users")
 }
+
 model SellerProfile {
   id          String       @id @default(cuid())
   userId      String       @unique
@@ -64,9 +87,10 @@ model SellerProfile {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
-  products     Product[]
-  sellerOrders SellerOrder[]
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  products      Product[]
+  sellerOrders  SellerOrder[]
+  statusHistory SellerStatusHistory[]
 
   @@index([status])
   @@map("seller_profiles")
@@ -78,13 +102,13 @@ model OrderItem {
   sellerOrderId String
   variantId     String
 
-  productName String
-  variantName String?
+  productName       String
+  variantName       String?
   variantAttributes Json?
-  sku         String
-  unitPrice   Decimal @db.Decimal(12, 2)
-  quantity    Int
-  subtotal    Decimal @db.Decimal(12, 2)
+  sku               String
+  unitPrice         Decimal @db.Decimal(12, 2)
+  quantity          Int
+  subtotal          Decimal @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
 
@@ -131,11 +155,12 @@ model Product {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  seller   SellerProfile    @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  category Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  variants ProductVariant[]
-  images   ProductImage[]
+  seller        SellerProfile          @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  category      Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants      ProductVariant[]
+  images        ProductImage[]
   wishlistItems WishlistItem[]
+  statusHistory ProductStatusHistory[]
 
   @@index([sellerId, status])
   @@index([categoryId, status])
@@ -208,7 +233,6 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-
 model Order {
   id             String      @id @default(cuid())
   orderNumber    String      @unique
@@ -257,11 +281,11 @@ model SellerOrder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  order         Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  seller        SellerProfile        @relation(fields: [sellerId], references: [id], onDelete: Restrict)
-  items         OrderItem[]
-  shipment      Shipment?
-  statusHistory OrderStatusHistory[]
+  order          Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  seller         SellerProfile        @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  items          OrderItem[]
+  shipment       Shipment?
+  statusHistory  OrderStatusHistory[]
   returnRequests ReturnRequest[]
 
   @@unique([orderId, sellerId])
@@ -278,8 +302,14 @@ model Shipment {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+  status              ShipmentStatus @default(READY_TO_SHIP)
+  shippedAt           DateTime?
+  estimatedDeliveryAt DateTime?
 
+  sellerOrder SellerOrder     @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
+  events      ShipmentEvent[]
+
+  @@index([status, updatedAt])
   @@map("shipments")
 }
 
@@ -362,8 +392,8 @@ model Address {
 
   @@index([userId, isDefault])
   @@map("addresses")
-
 }
+
 enum PaymentStatus {
   CREATED
   PENDING
@@ -373,10 +403,12 @@ enum PaymentStatus {
   REFUND_PENDING
   REFUNDED
 }
+
 enum PaymentMethod {
   ONLINE
   COD
 }
+
 // One row per payment attempt. Retries create a new row, so failures are never overwritten.
 model Payment {
   id               String        @id @default(cuid())
@@ -386,29 +418,80 @@ model Payment {
   gatewayPaymentId String?
   amount           Decimal       @db.Decimal(12, 2)
   currency         String        @default("INR") @db.Char(3)
-  status           PaymentStatus @default(CREATED)  
+  status           PaymentStatus @default(CREATED)
   method           PaymentMethod @default(ONLINE)
 
-  authorizedAt     DateTime?
-  capturedAt       DateTime?
-  failedAt         DateTime?
-  failureCode      String?
-  failureReason    String?
-  lastEventId      String?
-  requiresReview   Boolean       @default(false)
-  reviewReason     String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  authorizedAt   DateTime?
+  capturedAt     DateTime?
+  failedAt       DateTime?
+  failureCode    String?
+  failureReason  String?
+  lastEventId    String?
+  requiresReview Boolean   @default(false)
+  reviewReason   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  order   Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  user    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
-  refunds PaymentRefund[]
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  refunds        PaymentRefund[]
   returnRequests ReturnRequest[]
 
   @@index([orderId])
   @@index([userId])
   @@index([gatewayPaymentId])
   @@map("payments")
+}
+
+model SellerStatusHistory {
+  id              String       @id @default(cuid())
+  sellerProfileId String
+  adminId         String
+  fromStatus      SellerStatus
+  toStatus        SellerStatus
+  reason          String?
+  createdAt       DateTime     @default(now())
+
+  sellerProfile SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+  admin         User          @relation("SellerStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([sellerProfileId, createdAt])
+  @@index([adminId])
+  @@map("seller_status_histories")
+}
+
+model ProductStatusHistory {
+  id         String        @id @default(cuid())
+  productId  String
+  adminId    String
+  fromStatus ProductStatus
+  toStatus   ProductStatus
+  reason     String?
+  createdAt  DateTime      @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  admin   User    @relation("ProductStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([productId, createdAt])
+  @@index([adminId])
+  @@map("product_status_histories")
+}
+
+model CustomerStatusHistory {
+  id         String     @id @default(cuid())
+  customerId String
+  adminId    String
+  fromStatus UserStatus
+  toStatus   UserStatus
+  reason     String?
+  createdAt  DateTime   @default(now())
+
+  customer User @relation("CustomerStatusHistoryCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  admin    User @relation("CustomerStatusHistoryAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([adminId])
+  @@map("customer_status_histories")
 }
 
 model PaymentRefund {
@@ -422,14 +505,14 @@ model PaymentRefund {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  payment       Payment        @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   returnRequest ReturnRequest?
 
   @@index([paymentId])
   @@map("payment_refunds")
 }
 
-// Webhook idempotency + audit trail. The unique eventId stops duplicate processing.
+// Webhook idempotency + audit trail.
 model WebhookEvent {
   id          String    @id @default(cuid())
   eventId     String    @unique
@@ -444,6 +527,7 @@ model WebhookEvent {
   @@index([eventType])
   @@map("webhook_events")
 }
+
 enum ReturnStatus {
   REQUESTED
   APPROVED
@@ -478,10 +562,10 @@ model ReturnRequest {
   sellerNote    String?
   adminNote     String?
 
-  refundAmount  Decimal      @db.Decimal(12, 2)
-  currency      String       @default("INR") @db.Char(3)
-  paymentId     String?
-  paymentRefundId     String?  @unique
+  refundAmount         Decimal @db.Decimal(12, 2)
+  currency             String  @default("INR") @db.Char(3)
+  paymentId            String?
+  paymentRefundId      String? @unique
   refundIdempotencyKey String? @unique
 
   carrierName    String?
@@ -512,11 +596,11 @@ model ReturnRequest {
 }
 
 model ReturnItem {
-  id          String  @id @default(cuid())
-  returnId    String
-  orderItemId String
-  quantity    Int
-  unitPrice   Decimal @db.Decimal(12, 2)
+  id           String  @id @default(cuid())
+  returnId     String
+  orderItemId  String
+  quantity     Int
+  unitPrice    Decimal @db.Decimal(12, 2)
   refundAmount Decimal @db.Decimal(12, 2)
 
   returnRequest ReturnRequest @relation(fields: [returnId], references: [id], onDelete: Cascade)
@@ -542,4 +626,21 @@ model ReturnStatusHistory {
 
   @@index([returnId, createdAt])
   @@map("return_status_history")
+}
+
+model ShipmentEvent {
+  id              String         @id @default(cuid())
+  shipmentId      String
+  status          ShipmentStatus
+  description     String?
+  source          String         @default("SELLER")
+  actorId         String?
+  providerEventId String?        @unique
+  createdAt       DateTime       @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt])
+  @@index([status])
+  @@map("shipment_events")
 }
