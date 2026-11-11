@@ -10,4 +10,11 @@ const update = asyncHandler(async (req, res) => {
   res.json({ success: true, data });
 });
 
-module.exports = { update };
+// Admin only: GET /api/v1/inventory/admin/all
+const adminList = asyncHandler(async (req, res) => {
+  const data = await service.adminListInventory(req.validated.query);
+  res.json({ success: true, data });
+});
+
+module.exports = { update, adminList };
+

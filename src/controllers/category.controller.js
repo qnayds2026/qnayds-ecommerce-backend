@@ -27,4 +27,10 @@ const update = asyncHandler(async (req, res) => {
   res.json({ success: true, data });
 });
 
-module.exports = { list, listAdmin, create, update };
+
+// Admin only: GET /api/v1/categories/admin/all
+const listAll = asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await service.listAllCategories() });
+});
+
+module.exports = { list, listAdmin, listAll, create, update };

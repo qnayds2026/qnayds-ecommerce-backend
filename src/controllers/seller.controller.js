@@ -1,3 +1,4 @@
+
 const asyncHandler = require("../utils/asyncHandler");
 const sellerService = require("../services/seller.service");
 
@@ -16,6 +17,16 @@ const getMySeller = asyncHandler(async (req, res) => {
   res.json({ success: true, data: profile });
 });
 
+// Admin: list sellers
+const listSellers = asyncHandler(async (req, res) => {
+  const data = await sellerService.listSellerProfiles(req.validated.query);
+
+  res.status(200).json({
+    success: true,
+    data,
+  });
+});
+
 // Admin: view seller details
 const getSellerDetails = asyncHandler(async (req, res) => {
   const seller = await sellerService.getSellerProfileById(
@@ -25,16 +36,6 @@ const getSellerDetails = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: seller,
-  });
-});
-
-// Admin: list sellers
-const listSellers = asyncHandler(async (req, res) => {
-  const data = await sellerService.listSellerProfiles(req.validated.query);
-
-  res.status(200).json({
-    success: true,
-    data,
   });
 });
 

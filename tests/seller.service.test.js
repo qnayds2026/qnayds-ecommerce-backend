@@ -1,12 +1,15 @@
 jest.mock("../src/config/db", () => {
   const tx = {
-    sellerProfile: {
-      update: jest.fn(),
-    },
-    sellerStatusHistory: {
-      create: jest.fn(),
-    },
-  };
+  sellerProfile: {
+    update: jest.fn(),
+  },
+  sellerStatusHistory: {
+    create: jest.fn(),
+  },
+  user: {
+    update: jest.fn(),
+  },
+};
 
   return {
     prisma: {

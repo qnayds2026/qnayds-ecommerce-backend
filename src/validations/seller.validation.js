@@ -1,3 +1,4 @@
+
 const { z } = require("zod");
 
 const idParam = z.object({
@@ -31,9 +32,15 @@ const listSellerQuery = z.object({
   search: z.string().trim().max(100).optional(),
 });
 
+// Backward-compatible status-only query
+const listSellersQuery = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED", "SUSPENDED"]).optional(),
+});
+
 module.exports = {
   idParam,
   createSellerBody,
   updateStatusBody,
   listSellerQuery,
+  listSellersQuery,
 };

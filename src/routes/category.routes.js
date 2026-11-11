@@ -13,6 +13,8 @@ router.get(
   c.listAdmin
 );
 router.get("/", c.list);
+// Admin only: all categories, including inactive
+router.get("/admin/all", authenticate, authorize("ADMIN"), c.listAll);
 router.post(
   "/",
   authenticate,
