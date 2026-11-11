@@ -13,4 +13,13 @@ router.patch(
   c.update
 );
 
+// Admin only: all inventory (?page=1&limit=10&search=TEST&lowStock=true)
+router.get(
+  "/inventory/admin/all",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: v.adminListInventoryQuery }),
+  c.adminList
+);
+
 module.exports = router;

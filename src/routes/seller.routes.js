@@ -14,6 +14,16 @@ router.post(
 
 router.get("/me", authenticate, controller.getMySeller);
 
+// Admin only: list sellers (?status=PENDING)
+// Keep this after "/me" so "me" is never treated as an id
+router.get(
+  "/",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: v.listSellersQuery }),
+  controller.listSellers
+);
+
 router.patch(
   "/:id/status",
   authenticate,

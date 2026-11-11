@@ -12,4 +12,14 @@ const updateStatusBody = z.object({
   status: z.enum(["APPROVED", "REJECTED", "SUSPENDED"]),
 });
 
-module.exports = { idParam, createSellerBody, updateStatusBody };
+// Optional ?status= filter for the admin seller list
+const listSellersQuery = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED", "SUSPENDED"]).optional(),
+});
+
+module.exports = {
+  idParam,
+  createSellerBody,
+  updateStatusBody,
+  listSellersQuery,
+};

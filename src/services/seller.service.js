@@ -23,9 +23,43 @@ async function getMySellerProfile(userId) {
   return profile;
 }
 
-// Admin maathram
-async function updateSellerStatus(id, status) {
-  return prisma.sellerProfile.update({ where: { id }, data: { status } });
+// Admin only: list seller applications, optionally filtered by status
+async function listSellers(status) {
+  return prisma.sellerProfile.findMany({
+    where: status ? { status } : undefined,
+    orderBy: { createdAt: "desc" },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+    },
+  });
 }
 
-module.exports = { createSellerProfile, getMySellerProfile, updateSellerStatus };
+// Admin only: change seller status and keep User.role in sync (one transaction)
+// APPROVED -> SELLER, REJECTED / SUSPENDED -> CUSTOMER
+async function updateSellerStatus(id, status) {
+  const existing = await prisma.sellerProfile.findUnique({ where: { id } });
+  if (!existing) throw ApiError.notFound("Seller profile not found");
+
+  const newRole = status === "APPROVED" ? "SELLER" : "CUSTOMER";
+
+  const [profile] = await prisma.$transaction([
+    prisma.sellerProfile.update({
+      where: { id },
+      data: { status },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    }),
+    prisma.user.update({
+      where: { id: existing.userId },
+      data: { role: newRole },
+    }),
+  ]);
+
+  return profile;
+}
+
+module.exports = {
+  createSellerProfile,
+  getMySellerProfile,
+  listSellers,
+  updateSellerStatus,
+};

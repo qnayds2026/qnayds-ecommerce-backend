@@ -14,6 +14,11 @@ const getMySeller = asyncHandler(async (req, res) => {
   res.json({ success: true, data: profile });
 });
 
+const listSellers = asyncHandler(async (req, res) => {
+  const sellers = await sellerService.listSellers(req.validated.query.status);
+  res.json({ success: true, data: sellers });
+});
+
 const updateSellerStatus = asyncHandler(async (req, res) => {
   const profile = await sellerService.updateSellerStatus(
     req.validated.params.id,
@@ -22,4 +27,9 @@ const updateSellerStatus = asyncHandler(async (req, res) => {
   res.json({ success: true, data: profile });
 });
 
-module.exports = { createSeller, getMySeller, updateSellerStatus };
+module.exports = {
+  createSeller,
+  getMySeller,
+  listSellers,
+  updateSellerStatus,
+};

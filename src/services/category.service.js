@@ -8,6 +8,12 @@ async function listActiveCategories() {
   });
 }
 
+// Admin: all categories including inactive ones
+async function listAllCategories() {
+  return prisma.category.findMany({
+    orderBy: { name: "asc" },
+  });
+}
 async function assertParentValid(parentId, selfId) {
   if (!parentId) return;
 
@@ -41,4 +47,9 @@ async function updateCategory(id, data) {
   return prisma.category.update({ where: { id }, data });
 }
 
-module.exports = { listActiveCategories, createCategory, updateCategory };
+module.exports = {
+  listActiveCategories,
+  listAllCategories,
+  createCategory,
+  updateCategory,
+};

@@ -32,9 +32,20 @@ const listProductsQuery = z.object({
   brand: z.string().trim().max(100).optional(),
 });
 
+// Query for GET /products/admin/all (ADMIN only).
+// Example: /products/admin/all?page=1&limit=10&status=DRAFT&q=shirt
+const adminListProductsQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(),
+  q: z.string().trim().max(100).optional(),
+  categoryId: z.string().min(1).optional(),
+});
+
 module.exports = {
   idParam,
   createProductBody,
   updateProductBody,
   listProductsQuery,
+  adminListProductsQuery,
 };

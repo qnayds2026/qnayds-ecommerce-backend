@@ -115,6 +115,63 @@ async function listMyProducts(user) {
   });
 }
 
+// Admin: list ALL products (any status, any seller) with pagination.
+// Seller and category are loaded with separate queries, so this does not
+// depend on relation field names in schema.prisma.
+async function adminListProducts({ page, limit, status, q, categoryId }) {
+  const where = {
+    ...(status && { status }),
+    ...(categoryId && { categoryId }),
+    ...(q && {
+      OR: [
+        { name: { contains: q, mode: "insensitive" } },
+        { brand: { contains: q, mode: "insensitive" } },
+      ],
+    }),
+  };
+
+  const [products, total] = await prisma.$transaction([
+    prisma.product.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: {
+        variants: { select: { id: true, price: true, isActive: true } },
+      },
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  const sellerIds = [...new Set(products.map((p) => p.sellerId))];
+  const categoryIds = [...new Set(products.map((p) => p.categoryId))];
+
+  const [sellers, categories] = await Promise.all([
+    prisma.sellerProfile.findMany({
+      where: { id: { in: sellerIds } },
+      select: { id: true, shopName: true },
+    }),
+    prisma.category.findMany({
+      where: { id: { in: categoryIds } },
+      select: { id: true, name: true },
+    }),
+  ]);
+
+  const sellerMap = new Map(sellers.map((s) => [s.id, s]));
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+
+  const items = products.map((p) => ({
+    ...p,
+    seller: sellerMap.get(p.sellerId) || null,
+    category: categoryMap.get(p.categoryId) || null,
+  }));
+
+  return {
+    items,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
 module.exports = {
   createProduct,
   listProducts,
@@ -122,4 +179,5 @@ module.exports = {
   updateProduct,
   archiveProduct,
   listMyProducts,
+  adminListProducts,
 };
