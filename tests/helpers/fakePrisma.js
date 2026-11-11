@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const createFakePrisma = () => {
   let users = [];
   let tokens = [];
+  let customerStatusHistories = [];
 
   const pick = (row, select) => {
     if (!row) return null;
@@ -30,13 +31,14 @@ const createFakePrisma = () => {
         }
         const now = new Date();
         const row = {
-          id: crypto.randomUUID(),
-          name: null,
-          role: "CUSTOMER",
-          createdAt: now,
-          updatedAt: now,
-          ...data,
-        };
+        id: crypto.randomUUID(),
+        name: null,
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        createdAt: now,
+        updatedAt: now,
+        ...data,
+      };
         users.push(row);
         return pick(row, select);
       },
@@ -48,6 +50,19 @@ const createFakePrisma = () => {
         return pick(row, select);
       },
     },
+
+customerStatusHistory: {
+  create: async ({ data }) => {
+    const row = {
+      id: crypto.randomUUID(),
+      createdAt: new Date(),
+      ...data,
+    };
+
+    customerStatusHistories.push(row);
+    return { ...row };
+  },
+},
 
     refreshToken: {
       create: async ({ data }) => {
@@ -87,13 +102,17 @@ const createFakePrisma = () => {
     _reset: () => {
       users = [];
       tokens = [];
-    },
+      customerStatusHistories = [];
+  },
     get _users() {
       return users;
     },
     get _tokens() {
       return tokens;
     },
+    get _customerStatusHistories() {
+      return customerStatusHistories;
+   },
   };
 
   return fake;

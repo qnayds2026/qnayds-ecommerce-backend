@@ -1,3 +1,4 @@
+
 const router = require("express").Router();
 const validate = require("../middilewares/validateRequest");
 const authenticate = require("../middilewares/authenticate");
@@ -5,6 +6,7 @@ const authorize = require("../middilewares/authorize");
 const controller = require("../controllers/seller.controller");
 const v = require("../validations/seller.validation");
 
+// Seller registration
 router.post(
   "/",
   authenticate,
@@ -12,24 +14,34 @@ router.post(
   controller.createSeller
 );
 
+// Logged-in seller views own profile
 router.get("/me", authenticate, controller.getMySeller);
 
-// Admin only: list sellers (?status=PENDING)
-// Keep this after "/me" so "me" is never treated as an id
+// Admin: list and search sellers
 router.get(
   "/",
   authenticate,
   authorize("ADMIN"),
-  validate({ query: v.listSellersQuery }),
+  validate({ query: v.listSellerQuery }),
   controller.listSellers
 );
 
+// Admin: update seller status
 router.patch(
   "/:id/status",
   authenticate,
   authorize("ADMIN"),
   validate({ params: v.idParam, body: v.updateStatusBody }),
   controller.updateSellerStatus
+);
+
+// Admin: view seller details
+router.get(
+  "/:id",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ params: v.idParam }),
+  controller.getSellerDetails
 );
 
 module.exports = router;

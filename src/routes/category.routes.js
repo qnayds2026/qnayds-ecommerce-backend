@@ -5,6 +5,13 @@ const authorize = require("../middilewares/authorize");
 const c = require("../controllers/category.controller");
 const v = require("../validations/category.validation");
 
+router.get(
+  "/admin",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: v.listAdminCategoriesQuery }),
+  c.listAdmin
+);
 router.get("/", c.list);
 // Admin only: all categories, including inactive
 router.get("/admin/all", authenticate, authorize("ADMIN"), c.listAll);

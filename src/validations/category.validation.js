@@ -23,4 +23,15 @@ const updateCategoryBody = z
   .partial()
   .refine((o) => Object.keys(o).length > 0, "No fields to update");
 
-module.exports = { idParam, createCategoryBody, updateCategoryBody };
+const listAdminCategoriesQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  isActive: z.enum(["true", "false"]).optional(),
+});
+
+module.exports = {
+  idParam,
+  createCategoryBody,
+  updateCategoryBody,
+  listAdminCategoriesQuery,
+};
