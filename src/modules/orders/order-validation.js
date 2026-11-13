@@ -30,6 +30,15 @@ const paginationQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(10),
 });
 
+// Query for GET /orders/admin/all (ADMIN only).
+// Example: /orders/admin/all?page=1&limit=10&status=SHIPPED&search=QO-
+const adminListOrdersQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  status: z.enum(ORDER_STATUS_VALUES).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
 module.exports = {
   idParam,
   createOrderBody,
@@ -37,4 +46,6 @@ module.exports = {
   createShipmentBody,
   cancelOrderBody,
   paginationQuery,
+  adminListOrdersQuery,
+
 };
