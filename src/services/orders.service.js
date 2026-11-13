@@ -734,7 +734,73 @@ if (normalizedIdempotencyKey.length > 100) {
   }
 }
 
+// Admin: list ALL customer orders with pagination, status filter and search.
+// Search matches order number, customer name or customer email.
+// Customer details are loaded with a separate query (no relation name needed).
+async function adminListOrders({ page = 1, limit = 10, status, search }) {
+  const skip = (page - 1) * limit;
 
+  const where = {};
+  if (status) where.status = status;
+
+  if (search) {
+    const matchedUsers = await prisma.user.findMany({
+      where: {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    where.OR = [
+      { orderNumber: { contains: search, mode: "insensitive" } },
+      { userId: { in: matchedUsers.map((u) => u.id) } },
+    ];
+  }
+
+  const [orders, total] = await prisma.$transaction([
+    prisma.order.findMany({
+      where,
+      select: {
+        id: true,
+        orderNumber: true,
+        userId: true,
+        status: true,
+        totalAmount: true,
+        currency: true,
+        createdAt: true,
+        updatedAt: true,
+        orderItems: { select: { id: true, quantity: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.order.count({ where }),
+  ]);
+
+  const userIds = [...new Set(orders.map((o) => o.userId))];
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true, email: true },
+  });
+  const userMap = new Map(users.map((u) => [u.id, u]));
+
+  return {
+    orders: orders.map((o) => ({
+      ...o,
+      customer: userMap.get(o.userId) || null,
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
 async function cancelCustomerOrder(user, orderId, body) {
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.findFirst({
@@ -907,4 +973,5 @@ module.exports = {
   getCustomerOrderById,
   getCustomerOrderTracking,
   cancelCustomerOrder,
+  adminListOrders,
 };

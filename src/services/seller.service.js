@@ -1,3 +1,4 @@
+
 const { prisma } = require("../config/db");
 const ApiError = require("../utils/ApiError");
 
@@ -67,13 +68,10 @@ async function listSellerProfiles(query) {
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
     }),
-
     prisma.sellerProfile.count({ where }),
   ]);
 
@@ -88,18 +86,19 @@ async function listSellerProfiles(query) {
   };
 }
 
-// Admin: update seller status with audit history
+// Admin: update seller status, user role and audit history
 async function updateSellerStatus(id, status, adminId, reason) {
   const seller = await prisma.sellerProfile.findUnique({
     where: { id },
     select: {
       id: true,
+      userId: true,
       status: true,
     },
   });
 
   if (!seller) {
-    throw ApiError.notFound("Seller not found");
+    throw ApiError.notFound("Seller profile not found");
   }
 
   const allowedTransitions = {
@@ -121,10 +120,17 @@ async function updateSellerStatus(id, status, adminId, reason) {
     );
   }
 
+  const newRole = status === "APPROVED" ? "SELLER" : "CUSTOMER";
+
   return prisma.$transaction(async (tx) => {
     const updatedSeller = await tx.sellerProfile.update({
       where: { id },
       data: { status },
+    });
+
+    await tx.user.update({
+      where: { id: seller.userId },
+      data: { role: newRole },
     });
 
     await tx.sellerStatusHistory.create({
@@ -140,7 +146,8 @@ async function updateSellerStatus(id, status, adminId, reason) {
     return updatedSeller;
   });
 }
-// Admin: get seller details with status audit history
+
+// Admin: get seller details with status history
 async function getSellerProfileById(id) {
   const seller = await prisma.sellerProfile.findUnique({
     where: { id },
@@ -151,7 +158,6 @@ async function getSellerProfileById(id) {
       status: true,
       createdAt: true,
       updatedAt: true,
-
       user: {
         select: {
           id: true,
@@ -160,7 +166,6 @@ async function getSellerProfileById(id) {
           createdAt: true,
         },
       },
-
       statusHistory: {
         select: {
           id: true,
@@ -176,9 +181,7 @@ async function getSellerProfileById(id) {
             },
           },
         },
-        orderBy: {
-          createdAt: "desc",
-        },
+        orderBy: { createdAt: "desc" },
       },
     },
   });

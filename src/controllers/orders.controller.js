@@ -129,6 +129,17 @@ const cancelCustomerOrder = asyncHandler(async (req, res) => {
   });
 });
 
+// Admin only: GET /api/v1/orders/admin/all
+const adminListOrders = asyncHandler(async (req, res) => {
+  const data = await service.adminListOrders(req.validated.query);
+
+  res.json({
+    success: true,
+    message: "Orders fetched successfully",
+    data,
+  });
+});
+
 module.exports = {
   createOrder,
   listSellerOrders,
@@ -139,4 +150,5 @@ module.exports = {
   getCustomerOrder,
   getCustomerOrderTracking,
   cancelCustomerOrder,
+  adminListOrders,
 };

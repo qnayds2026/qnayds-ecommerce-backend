@@ -34,4 +34,10 @@ const listMine = asyncHandler(async (req, res) => {
   res.json({ success: true, data: await service.listMyProducts(req.user) });
 });
 
-module.exports = { create, list, getOne, update, archive, listMine };
+// Admin only: GET /api/v1/products/admin/all
+const adminList = asyncHandler(async (req, res) => {
+  const { items, pagination } = await service.adminListProducts(req.validated.query);
+  res.json({ success: true, data: items, pagination });
+});
+
+module.exports = { create, list, getOne, update, archive, listMine, adminList };

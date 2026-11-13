@@ -61,6 +61,15 @@ router.get(
   controller.listCustomerOrders
 );
 
+// Admin only: all orders (?page=1&limit=10&status=SHIPPED&search=QO-)
+router.get(
+  "/orders/admin/all",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: validation.adminListOrdersQuery }),
+  controller.adminListOrders
+);
+
 router.get(
   "/orders/:orderId/tracking",
   authenticate,

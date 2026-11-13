@@ -1,3 +1,4 @@
+
 const router = require("express").Router();
 const validate = require("../middilewares/validateRequest");
 const authenticate = require("../middilewares/authenticate");
@@ -16,7 +17,7 @@ router.post(
 // Logged-in seller views own profile
 router.get("/me", authenticate, controller.getMySeller);
 
-// Admin: list and search all sellers
+// Admin: list and search sellers
 router.get(
   "/",
   authenticate,

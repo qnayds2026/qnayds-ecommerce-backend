@@ -7,6 +7,16 @@ const v = require("../validations/product.validation");
 
 router.get("/", validate({ query: v.listProductsQuery }), c.list);
 router.get("/mine", authenticate, authorize("SELLER", "ADMIN"), c.listMine); 
+
+// Admin only: all products, any status (?page=1&limit=10&status=DRAFT&q=shirt)
+router.get(
+  "/admin/all",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: v.adminListProductsQuery }),
+  c.adminList
+);
+
 router.get("/:id", validate({ params: v.idParam }), c.getOne);
 
 router.post("/", authenticate, authorize("SELLER", "ADMIN"), validate({ body: v.createProductBody }), c.create);

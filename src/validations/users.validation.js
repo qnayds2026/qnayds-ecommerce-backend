@@ -13,6 +13,16 @@ const updateProfileSchema = z
     message: "Provide at least one field to update",
   });
 
+// Query for GET /api/v1/users (ADMIN only).
+// Example: /users?page=1&limit=10&role=SELLER&search=henna
+const listUsersQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  role: z.enum(["CUSTOMER", "SELLER", "ADMIN"]).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
 module.exports = {
   updateProfileSchema,
+  listUsersQuery,
 };

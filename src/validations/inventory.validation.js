@@ -14,4 +14,14 @@ const updateInventoryBody = z
     "Provide exactly one of delta or available"
   );
 
-module.exports = { idParam, updateInventoryBody };
+  // Query for GET /inventory/admin/all (ADMIN only).
+// Example: /inventory/admin/all?page=1&limit=10&search=TEST&lowStock=true
+const adminListInventoryQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  search: z.string().trim().max(100).optional(),
+  lowStock: z.enum(["true", "false"]).optional(),
+});
+
+module.exports = { idParam, updateInventoryBody, adminListInventoryQuery };
+

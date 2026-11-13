@@ -10,4 +10,14 @@ const updateMe = async (req, res, next) => {
   }
 };
 
-module.exports = { updateMe };
+// Admin only: GET /api/v1/users
+const listUsers = async (req, res, next) => {
+  try {
+    const data = await usersService.listUsers(req.query);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+module.exports = { updateMe, listUsers };
