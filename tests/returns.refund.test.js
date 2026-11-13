@@ -1,6 +1,14 @@
 jest.mock("../src/config/db", () => ({
   prisma: {
-    returnRequest: { findUnique: jest.fn() },
+    returnRequest: {
+      findUnique: jest.fn(),
+    },
+    user: {
+      findMany: jest.fn(),
+    },
+    notification: {
+      upsert: jest.fn(),
+    },
     $transaction: jest.fn(),
   },
 }));
@@ -51,8 +59,12 @@ describe("returns.refund.service refundReturn", () => {
   let tx;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    razorpay.assertConfigured.mockReset();
+  jest.clearAllMocks();
+
+  prisma.user.findMany.mockResolvedValue([{ id: "user_admin" }]);
+  prisma.notification.upsert.mockResolvedValue({ id: "notification_1" });
+
+  razorpay.assertConfigured.mockReset();
 
     tx = {
       returnRequest: {
@@ -221,32 +233,65 @@ describe("returns.refund.service refundReturn", () => {
     });
   });
 
-  test("provider rejects the refund (4xx): return becomes REFUND_FAILED, no refund row, 409 with a clear message", async () => {
+    test("provider rejects the refund (4xx): return becomes REFUND_FAILED, no refund row, 409 with a clear message", async () => {
     razorpay.createGatewayRefund.mockRejectedValue({
       statusCode: 400,
       error: { description: "Insufficient balance" },
     });
 
-    await expect(refundService.refundReturn(admin, "ret_1")).rejects.toMatchObject({
+    await expect(
+      refundService.refundReturn(admin, "ret_1")
+    ).rejects.toMatchObject({
       statusCode: 409,
     });
 
-    // 1st updateMany = claim, 2nd = mark failed (only from REFUND_INITIATED)
+    // Verify refund status is changed to REFUND_FAILED.
     const failed = tx.returnRequest.updateMany.mock.calls[1][0];
-    expect(failed.where).toEqual({ id: "ret_1", status: "REFUND_INITIATED" });
+
+    expect(failed.where).toEqual({
+      id: "ret_1",
+      status: "REFUND_INITIATED",
+    });
+
     expect(failed.data.status).toBe("REFUND_FAILED");
     expect(failed.data.refundIdempotencyKey).toBeNull();
 
+    // Verify refund failure history.
     const failedAudit = tx.returnStatusHistory.create.mock.calls[1][0].data;
+
     expect(failedAudit).toMatchObject({
       oldStatus: "REFUND_INITIATED",
       newStatus: "REFUND_FAILED",
       actorRole: "SYSTEM",
     });
+
     expect(failedAudit.note).toContain("Insufficient balance");
 
+    // No successful refund record should be created.
     expect(tx.paymentRefund.upsert).not.toHaveBeenCalled();
     expect(tx.returnRequest.update).not.toHaveBeenCalled();
+
+    // Verify admin recipients are fetched.
+    expect(prisma.user.findMany).toHaveBeenCalledWith({
+      where: { role: "ADMIN" },
+      select: { id: true },
+    });
+
+    // Verify admin receives REFUND_FAILED notification.
+    expect(prisma.notification.upsert).toHaveBeenCalledWith({
+      where: {
+        dedupeKey: "REFUND_FAILED:ret_1:user_admin",
+      },
+      create: {
+        userId: "user_admin",
+        type: "REFUND_FAILED",
+        title: "Refund failed",
+        message: "Refund for return RET-1 failed: Insufficient balance",
+        link: "/admin/returns/ret_1",
+        dedupeKey: "REFUND_FAILED:ret_1:user_admin",
+      },
+      update: {},
+    });
   });
 
   test.each([
@@ -380,6 +425,8 @@ describe("webhooks.hooks onRefundEvent", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.user.findMany.mockResolvedValue([{ id: "user_admin" }]);
+    prisma.notification.upsert.mockResolvedValue({ id: "notification_1" });
 
     tx = {
       returnRequest: {

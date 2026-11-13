@@ -41,6 +41,19 @@ const cancelReturn = async (req, res, next) => {
   }
 };
 
+const escalateReturn = async (req, res, next) => {
+  try {
+    const data = await returnsService.escalateRejectedReturn(
+      req.user,
+      req.validated.params.returnId,
+      req.validated.body.reason
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const listSellerReturns = async (req, res, next) => {
   try {
     const data = await returnsService.listSellerReturns(req.user, req.validated.query);
@@ -137,4 +150,5 @@ module.exports = {
   rejectReturn,
   markReceived,
   refundReturn,
+  escalateReturn,
 };

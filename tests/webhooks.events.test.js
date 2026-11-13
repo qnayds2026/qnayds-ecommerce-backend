@@ -1,7 +1,8 @@
-jest.mock("../src/modules/webhooks/webhooks.hooks", () => ({
+﻿jest.mock("../src/modules/webhooks/webhooks.hooks", () => ({
   onPaymentCaptured: jest.fn(),
   onPaymentFailed: jest.fn(),
   onPaymentRefunded: jest.fn(),
+  notifyAdmins: jest.fn().mockResolvedValue([]),
 }));
 
 const hooks = require("../src/modules/webhooks/webhooks.hooks");
@@ -173,3 +174,4 @@ describe("razorpay event handlers", () => {
     expect(tx.payment.update).not.toHaveBeenCalled();
   });
 });
+

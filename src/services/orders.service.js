@@ -1,3 +1,4 @@
+
 const crypto = require("crypto");
 const { Prisma } = require("@prisma/client");
 const { prisma } = require("../config/db");
@@ -5,12 +6,135 @@ const ApiError = require("../utils/ApiError");
 const { getSellerByUser } = require("./ownership.service");
 const { canTransitionOrderStatus } = require("../modules/orders/order-status");
 const { validateCartForCheckout } = require("./cart.service");
+const {
+  createManyNotifications,
+} = require("../modules/notifications/notifications.service");
 
 function generateOrderNumber() {
   const timestamp = Date.now();
   const random = crypto.randomBytes(3).toString("hex").toUpperCase();
 
   return `QO-${timestamp}-${random}`;
+}
+
+// Notify customer and sellers when an order is placed.
+async function notifyOrderPlaced(order) {
+  try {
+    const sellerIds = [
+      ...new Set(
+        (order.sellerOrders || []).map((item) => item.sellerId)
+      ),
+    ];
+
+    const sellers = sellerIds.length
+      ? await prisma.sellerProfile.findMany({
+          where: {
+            id: { in: sellerIds },
+          },
+          select: {
+            id: true,
+            userId: true,
+          },
+        })
+      : [];
+
+    const sellerUserMap = new Map(
+      sellers.map((seller) => [seller.id, seller.userId])
+    );
+
+    const notifications = [
+      {
+        userId: order.userId,
+        type: "ORDER_PLACED",
+        title: "Order placed successfully",
+        message: `Your order ${order.orderNumber} has been placed successfully.`,
+        link: `/orders/${order.id}`,
+        dedupeKey: `ORDER_PLACED:${order.userId}:${order.id}`,
+      },
+    ];
+
+    for (const sellerOrder of order.sellerOrders || []) {
+      const sellerUserId = sellerUserMap.get(sellerOrder.sellerId);
+
+      if (!sellerUserId) continue;
+
+      notifications.push({
+        userId: sellerUserId,
+        type: "NEW_ORDER_RECEIVED",
+        title: "New order received",
+        message: "A new order containing your products has been received.",
+        link: `/seller/orders/${sellerOrder.id}`,
+        dedupeKey: `NEW_ORDER_RECEIVED:${sellerUserId}:${sellerOrder.id}`,
+      });
+    }
+
+    await createManyNotifications(notifications);
+  } catch (error) {
+    console.error(
+      "[notifications] Order placed notification failed:",
+      error.message
+    );
+  }
+}
+
+// Notify customer and sellers when an order is cancelled.
+async function notifyOrderCancelled(order) {
+  try {
+    const sellerIds = [
+      ...new Set(
+        (order.sellerOrders || []).map((item) => item.sellerId)
+      ),
+    ];
+
+    const sellers = sellerIds.length
+      ? await prisma.sellerProfile.findMany({
+          where: {
+            id: { in: sellerIds },
+          },
+          select: {
+            id: true,
+            userId: true,
+          },
+        })
+      : [];
+
+    const sellerUserMap = new Map(
+      sellers.map((seller) => [seller.id, seller.userId])
+    );
+
+    const notifications = [
+      {
+        userId: order.userId,
+        type: "ORDER_CANCELLED",
+        title: "Order cancelled",
+        message: `Your order ${order.orderNumber} has been cancelled.`,
+        link: `/orders/${order.id}`,
+        dedupeKey: `ORDER_CANCELLED:${order.userId}:${order.id}`,
+      },
+    ];
+
+    for (const sellerOrder of order.sellerOrders || []) {
+      const sellerUserId = sellerUserMap.get(sellerOrder.sellerId);
+
+      if (!sellerUserId) continue;
+
+      notifications.push({
+        userId: sellerUserId,
+        type: "ORDER_CANCELLED_SELLER",
+        title: "Customer order cancelled",
+        message: "A customer has cancelled an order containing your products.",
+        link: `/seller/orders/${sellerOrder.id}`,
+        dedupeKey: `ORDER_CANCELLED_SELLER:${sellerUserId}:${sellerOrder.id}`,
+      });
+    }
+
+    await createManyNotifications(notifications);
+  } catch (error) {
+    console.error(
+      "[notifications] Order cancellation notification failed:",
+      error.message
+    );
+  }
 }
 
 // Seller-inte swantham orders maathram list cheyyuka
@@ -62,7 +186,7 @@ async function listSellerOrders(user, page = 1, limit = 10) {
     },
   };
 }
-    
+
 const ORDER_STATUS_RANK = {
   PENDING_PAYMENT: 0,
   CONFIRMED: 1,
@@ -78,6 +202,7 @@ async function syncParentOrderStatus(tx, orderId, changedBy) {
       where: { id: orderId },
       select: { status: true },
     }),
+
     tx.sellerOrder.findMany({
       where: { orderId },
       select: { status: true },
@@ -107,7 +232,6 @@ async function syncParentOrderStatus(tx, orderId, changedBy) {
       (status) => ORDER_STATUS_RANK[status] === lowestRank
     );
 
-    // Never move the parent order backwards
     if (
       ORDER_STATUS_RANK[nextStatus] <=
       ORDER_STATUS_RANK[order.status]
@@ -192,7 +316,7 @@ async function updateSellerOrderStatus(user, orderId, body) {
     },
   });
 
-    if (!sellerOrder) {
+  if (!sellerOrder) {
     throw ApiError.notFound("Seller order not found");
   }
 
@@ -213,8 +337,7 @@ async function updateSellerOrderStatus(user, orderId, body) {
     );
   }
 
-  return prisma.$transaction(async (tx) => {
-    // Prevent concurrent status updates
+  const updatedSellerOrder = await prisma.$transaction(async (tx) => {
     const result = await tx.sellerOrder.updateMany({
       where: {
         id: sellerOrder.id,
@@ -232,8 +355,7 @@ async function updateSellerOrderStatus(user, orderId, body) {
       );
     }
 
-    // Record status history
-       await tx.orderStatusHistory.create({
+    await tx.orderStatusHistory.create({
       data: {
         orderId: sellerOrder.orderId,
         sellerOrderId: sellerOrder.id,
@@ -244,7 +366,6 @@ async function updateSellerOrderStatus(user, orderId, body) {
       },
     });
 
-    // Synchronize parent customer order status
     await syncParentOrderStatus(
       tx,
       sellerOrder.orderId,
@@ -255,8 +376,13 @@ async function updateSellerOrderStatus(user, orderId, body) {
       where: {
         id: sellerOrder.id,
       },
+      include: {
+        order: true,
+      },
     });
   });
+
+  return updatedSellerOrder;
 }
 
 // Seller shipment details add cheyyuka
@@ -272,6 +398,9 @@ async function createSellerShipment(user, orderId, body) {
       id: orderId,
       sellerId: seller.id,
     },
+    include: {
+      order: true,
+    },
   });
 
   if (!sellerOrder) {
@@ -284,8 +413,7 @@ async function createSellerShipment(user, orderId, body) {
     );
   }
 
-  return prisma.$transaction(async (tx) => {
-    // Verify status has not changed concurrently
+  const shipment = await prisma.$transaction(async (tx) => {
     const result = await tx.sellerOrder.updateMany({
       where: {
         id: sellerOrder.id,
@@ -303,8 +431,7 @@ async function createSellerShipment(user, orderId, body) {
       );
     }
 
-    // Create shipment inside the same transaction
-    const shipment = await tx.shipment.create({
+    const createdShipment = await tx.shipment.create({
       data: {
         sellerOrderId: sellerOrder.id,
         carrierName: body.carrierName,
@@ -313,7 +440,6 @@ async function createSellerShipment(user, orderId, body) {
       },
     });
 
-    // Record status history
     await tx.orderStatusHistory.create({
       data: {
         orderId: sellerOrder.orderId,
@@ -324,14 +450,30 @@ async function createSellerShipment(user, orderId, body) {
         note: "Shipment created",
       },
     });
+
     await syncParentOrderStatus(
       tx,
       sellerOrder.orderId,
       user.id
     );
-    return shipment;
+
+    return createdShipment;
   });
+
+  await createManyNotifications([
+    {
+      userId: sellerOrder.order.userId,
+      type: "ORDER_SHIPPED",
+      title: "Your order has been shipped",
+      message: `Your order ${sellerOrder.order.orderNumber} has been shipped.`,
+      link: `/orders/${sellerOrder.orderId}`,
+      dedupeKey: `ORDER_SHIPPED:${sellerOrder.order.userId}:${sellerOrder.id}`,
+    },
+  ]);
+
+  return shipment;
 }
+
 // Customer-inte own orders list cheyyuka
 async function listCustomerOrders(user, page = 1, limit = 10) {
   const skip = (page - 1) * limit;
@@ -362,6 +504,7 @@ async function listCustomerOrders(user, page = 1, limit = 10) {
       skip,
       take: limit,
     }),
+
     prisma.order.count({
       where: {
         userId: user.id,
@@ -410,7 +553,6 @@ async function getCustomerOrderById(user, orderId) {
 
   return order;
 }
-
 
 async function getCustomerOrderTracking(user, orderId) {
   const order = await prisma.order.findFirst({
@@ -479,25 +621,22 @@ async function getCustomerOrderTracking(user, orderId) {
   return order;
 }
 
-
-
 async function createOrder(user, body = {}, idempotencyKey) {
   if (
-  typeof idempotencyKey !== "string" ||
-  !idempotencyKey.trim()
-) {
-  throw ApiError.badRequest("Idempotency-Key header is required");
-}
+    typeof idempotencyKey !== "string" ||
+    !idempotencyKey.trim()
+  ) {
+    throw ApiError.badRequest("Idempotency-Key header is required");
+  }
 
-const normalizedIdempotencyKey = idempotencyKey.trim();
+  const normalizedIdempotencyKey = idempotencyKey.trim();
 
-if (normalizedIdempotencyKey.length > 100) {
-  throw ApiError.badRequest(
-    "Idempotency-Key must not exceed 100 characters"
-  );
-}
+  if (normalizedIdempotencyKey.length > 100) {
+    throw ApiError.badRequest(
+      "Idempotency-Key must not exceed 100 characters"
+    );
+  }
 
-  // Same request retry cheythal existing order return cheyyuka
   const existingOrder = await prisma.order.findFirst({
     where: {
       userId: user.id,
@@ -512,8 +651,7 @@ if (normalizedIdempotencyKey.length > 100) {
   if (existingOrder) return existingOrder;
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      // Cart validation
+    const createdOrder = await prisma.$transaction(async (tx) => {
       await validateCartForCheckout(user.id, tx);
 
       const cart = await tx.cart.findUnique({
@@ -536,7 +674,6 @@ if (normalizedIdempotencyKey.length > 100) {
         throw ApiError.badRequest("Cart is empty");
       }
 
-      // Customer address ownership validation
       const address = body.addressId
         ? await tx.address.findFirst({
             where: { id: body.addressId, userId: user.id },
@@ -577,7 +714,6 @@ if (normalizedIdempotencyKey.length > 100) {
           );
         }
 
-        // Current DB price use cheyyuka; client price trust cheyyaruthu
         const unitPrice = new Prisma.Decimal(variant.price.toString());
         const subtotal = unitPrice.mul(quantity);
 
@@ -607,7 +743,6 @@ if (normalizedIdempotencyKey.length > 100) {
         });
       }
 
-      // Parent customer order
       const order = await tx.order.create({
         data: {
           orderNumber: generateOrderNumber(),
@@ -628,7 +763,6 @@ if (normalizedIdempotencyKey.length > 100) {
         },
       });
 
-      // Seller-specific orders and immutable item snapshots
       for (const [sellerId, group] of sellerGroups) {
         const sellerOrder = await tx.sellerOrder.create({
           data: {
@@ -661,7 +795,6 @@ if (normalizedIdempotencyKey.length > 100) {
         });
       }
 
-      // Overall order status history
       await tx.orderStatusHistory.create({
         data: {
           orderId: order.id,
@@ -672,7 +805,6 @@ if (normalizedIdempotencyKey.length > 100) {
         },
       });
 
-      // Atomically reserve stock; quantityAvailable stays unchanged
       for (const cartItem of cart.items) {
         const quantity = cartItem.quantity;
         const variantId = cartItem.variantId;
@@ -692,7 +824,6 @@ if (normalizedIdempotencyKey.length > 100) {
         }
       }
 
-      // Clear cart only after successful order creation
       await tx.cartItem.deleteMany({
         where: { cartId: cart.id },
       });
@@ -713,8 +844,11 @@ if (normalizedIdempotencyKey.length > 100) {
         },
       });
     });
+
+    await notifyOrderPlaced(createdOrder);
+
+    return createdOrder;
   } catch (error) {
-    // Concurrent duplicate request: return the already-created order
     if (error.code === "P2002") {
       const duplicate = await prisma.order.findFirst({
         where: {
@@ -734,9 +868,8 @@ if (normalizedIdempotencyKey.length > 100) {
   }
 }
 
-
 async function cancelCustomerOrder(user, orderId, body) {
-  return prisma.$transaction(async (tx) => {
+  const cancelledOrder = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findFirst({
       where: {
         id: orderId,
@@ -758,7 +891,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       );
     }
 
-    // Skip seller orders that are already cancelled
     const activeSellerOrders = order.sellerOrders.filter(
       (sellerOrder) => sellerOrder.status !== "CANCELLED"
     );
@@ -767,7 +899,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       throw ApiError.badRequest("All seller orders are already cancelled");
     }
 
-    // Validate cancellation transition for active seller orders
     for (const sellerOrder of activeSellerOrders) {
       if (!canTransitionOrderStatus(sellerOrder.status, "CANCELLED")) {
         throw ApiError.badRequest(
@@ -776,7 +907,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       }
     }
 
-    // Conditionally cancel the parent order
     const orderUpdate = await tx.order.updateMany({
       where: {
         id: order.id,
@@ -794,7 +924,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       );
     }
 
-    // Cancel only active seller orders
     for (const sellerOrder of activeSellerOrders) {
       const sellerUpdate = await tx.sellerOrder.updateMany({
         where: {
@@ -814,7 +943,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       }
     }
 
-    // Collect items belonging only to active seller orders
     const activeSellerOrderIds = new Set(
       activeSellerOrders.map((sellerOrder) => sellerOrder.id)
     );
@@ -823,7 +951,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       activeSellerOrderIds.has(item.sellerOrderId)
     );
 
-    // Group quantities by variant
     const quantitiesByVariant = new Map();
 
     for (const item of activeOrderItems) {
@@ -836,7 +963,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       );
     }
 
-    // Release reserved stock only for active seller orders
     for (const [variantId, quantity] of quantitiesByVariant) {
       const released = await tx.$executeRaw`
         UPDATE "inventory"
@@ -853,7 +979,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       }
     }
 
-    // Parent order status history
     await tx.orderStatusHistory.create({
       data: {
         orderId: order.id,
@@ -864,7 +989,6 @@ async function cancelCustomerOrder(user, orderId, body) {
       },
     });
 
-    // Status history for active seller orders only
     for (const sellerOrder of activeSellerOrders) {
       await tx.orderStatusHistory.create({
         data: {
@@ -878,7 +1002,7 @@ async function cancelCustomerOrder(user, orderId, body) {
       });
     }
 
-    return tx.order.findUnique({
+    const updatedOrder = await tx.order.findUnique({
       where: { id: order.id },
       include: {
         sellerOrders: {
@@ -893,9 +1017,15 @@ async function cancelCustomerOrder(user, orderId, body) {
         },
       },
     });
-  });
-}
 
+    return updatedOrder;
+  });
+
+  // Send cancellation notifications after the DB transaction succeeds.
+  await notifyOrderCancelled(cancelledOrder);
+
+  return cancelledOrder;
+}
 
 module.exports = {
   createOrder,

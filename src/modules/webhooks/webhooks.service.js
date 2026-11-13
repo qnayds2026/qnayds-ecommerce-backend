@@ -1,17 +1,23 @@
+
 const { prisma } = require("../../config/db");
+const {
+  createManyNotifications,
+} = require("../notifications/notifications.service");
 const { handlers } = require("./razorpay.events");
 
 /**
- * Idempotent processing:
- *  - The WebhookEvent row (unique eventId) is inserted FIRST inside the same DB transaction as the
- *    state change. A concurrent duplicate blocks on the unique index until the first commits,
- *    then fails with P2002 -> we answer "DUPLICATE" and do nothing.
- *  - If anything throws, the whole transaction (including the event row) rolls back, so Razorpay's
- *    retry is processed cleanly instead of being mistaken for a duplicate.
+ * Idempotent webhook processing.
+ * Business changes and webhook event record commit together.
+ * Notifications are created after commit so notification failure
+ * cannot roll back the business transaction.
  */
 async function processEvent({ eventId, event }) {
+  const notifications = [];
+
+  let outcome;
+
   try {
-    return await prisma.$transaction(
+    outcome = await prisma.$transaction(
       async (tx) => {
         const row = await tx.webhookEvent.create({
           data: {
@@ -19,28 +25,54 @@ async function processEvent({ eventId, event }) {
             provider: "RAZORPAY",
             eventType: event.event,
             status: "PROCESSING",
-            // Store payload for reconciliation. Razorpay payloads carry no card numbers/CVV.
             payload: event,
           },
         });
 
         const handler = handlers[event.event];
-        const outcome = handler
-          ? await handler(tx, { eventId, event })
+
+        const result = handler
+          ? await handler(tx, {
+              eventId,
+              event,
+              notifications,
+            })
           : "IGNORED_UNSUPPORTED_EVENT";
 
         await tx.webhookEvent.update({
           where: { id: row.id },
-          data: { status: "PROCESSED", outcome, processedAt: new Date() },
+          data: {
+            status: "PROCESSED",
+            outcome: result,
+            processedAt: new Date(),
+          },
         });
-        return outcome;
+
+        return result;
       },
       { timeout: 10000 }
     );
   } catch (err) {
-    if (err && err.code === "P2002") return "DUPLICATE";
+    if (err && err.code === "P2002") {
+      return "DUPLICATE";
+    }
+
     throw err;
   }
+
+  // Best-effort notification creation after the transaction commits.
+  if (notifications.length > 0) {
+    try {
+      await createManyNotifications(notifications);
+    } catch (error) {
+      console.error(
+        "Webhook notifications could not be created:",
+        error.message
+      );
+    }
+  }
+
+  return outcome;
 }
 
 module.exports = { processEvent };

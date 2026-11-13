@@ -67,6 +67,17 @@ const rejectReturnBody = z
 // Customer cancel: note is optional.
 const cancelReturnBody = z.object({ note: optionalNote }).strict();
 
+// Customer requests admin review after seller rejects a return.
+const escalateReturnBody = z
+  .object({
+    reason: z
+      .string({ required_error: "Escalation reason is required" })
+      .trim()
+      .min(3, "Please provide a valid escalation reason")
+      .max(500, "Escalation reason must be 500 characters or less"),
+  })
+  .strict();
+
 // Admin refund: note is optional.
 const refundReturnBody = z.object({ note: optionalNote }).strict();
 
@@ -87,6 +98,10 @@ const listReturnsQuery = z.object({
     .optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(10),
+  escalatedOnly: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
 });
 // Customer adds the courier details of the parcel being sent back.
 const shipmentBody = z
@@ -118,4 +133,5 @@ module.exports = {
   shipmentBody,
   receivedReturnBody,
   listReturnsQuery,
+  escalateReturnBody,
 };

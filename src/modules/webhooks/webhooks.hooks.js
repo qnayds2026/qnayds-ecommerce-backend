@@ -1,58 +1,169 @@
-// Called INSIDE the webhook DB transaction (`tx`), so the order change commits or rolls back
-// together with the payment status change.
 
 const { confirmOrder } = require("../payments/order-confirmation");
 
 const CHANGED_BY = "system:razorpay-webhook";
 
-async function onPaymentCaptured(tx, payment) {
+// Queue notification data. Actual DB creation happens after webhook transaction commits.
+function queueNotification(notifications, data) {
+  if (!Array.isArray(notifications)) return;
+
+  if (
+    !data ||
+    !data.userId ||
+    !data.type ||
+    !data.title ||
+    !data.message ||
+    !data.dedupeKey
+  ) {
+    return;
+  }
+
+  notifications.push(data);
+}
+
+// Queue notifications for all admins.
+async function notifyAdmins(tx, notifications, data) {
+  try {
+    const admins = await tx.user.findMany({
+      where: { role: "ADMIN" },
+      select: { id: true },
+    });
+
+    for (const admin of admins) {
+      queueNotification(notifications, {
+        ...data,
+        userId: admin.id,
+        dedupeKey: String(data.dedupeKey) + ":" + String(admin.id),
+      });
+    }
+
+    return admins;
+  } catch (error) {
+    console.error("Admin notification lookup failed:", error.message);
+    return [];
+  }
+}
+
+async function onPaymentCaptured(tx, payment, notifications) {
   const order = await tx.order.findUnique({
     where: { id: payment.orderId },
-    select: { status: true },
+    select: {
+      id: true,
+      status: true,
+      userId: true,
+      orderNumber: true,
+    },
   });
 
-  if (!order) throw new Error("Order not found for captured payment");
+  if (!order) {
+    throw new Error("Order not found for captured payment");
+  }
 
   if (order.status === "CANCELLED") {
-    // Customer cancelled before the payment arrived: money was taken for a cancelled order.
     await tx.payment.update({
       where: { id: payment.id },
       data: {
         requiresReview: true,
-        reviewReason: "Payment captured but order is CANCELLED; refund required",
+        reviewReason:
+          "Payment captured but order is CANCELLED; refund required",
       },
     });
+
+    await notifyAdmins(tx, notifications, {
+      type: "PAYMENT_FLAGGED_FOR_REVIEW",
+      title: "Payment flagged for review",
+      message:
+        "Payment was captured for cancelled order " +
+        order.orderNumber +
+        ". Please review and arrange a refund if required.",
+      link: "/admin/orders/" + order.id,
+      dedupeKey: "PAYMENT_FLAGGED_FOR_REVIEW:" + payment.id,
+    });
+
     return;
   }
 
-  // No-op if the order is already confirmed or has moved on (idempotent).
-  await confirmOrder(tx, payment.orderId, {
+  const confirmationStatus = await confirmOrder(tx, payment.orderId, {
     changedBy: CHANGED_BY,
     note: "Payment captured",
   });
 
-  // TODO (Team Lead): stock commit timing is undecided; reserved stock is left untouched for now.
+  if (confirmationStatus === "CONFIRMED") {
+    queueNotification(notifications, {
+      userId: order.userId,
+      type: "ORDER_CONFIRMED",
+      title: "Order confirmed",
+      message:
+        "Your order " + order.orderNumber + " has been confirmed.",
+      link: "/orders/" + order.id,
+      dedupeKey:
+        "ORDER_CONFIRMED:" + order.userId + ":" + order.id,
+    });
+  }
+
+  queueNotification(notifications, {
+    userId: order.userId,
+    type: "PAYMENT_SUCCESS",
+    title: "Payment successful",
+    message:
+      "Payment for order " + order.orderNumber + " was successful.",
+    link: "/orders/" + order.id,
+    dedupeKey:
+      "PAYMENT_SUCCESS:" + order.userId + ":" + payment.id,
+  });
 }
 
-async function onPaymentFailed(tx, payment) {
-  // Intentionally nothing: the order stays PENDING_PAYMENT with its stock reserved,
-  // so the customer can retry payment. Expiry/auto-cancel of abandoned orders is a Team Lead decision.
+async function onPaymentFailed(tx, payment, notifications) {
+  const order = await tx.order.findUnique({
+    where: { id: payment.orderId },
+    select: {
+      id: true,
+      userId: true,
+      orderNumber: true,
+    },
+  });
+
+  if (!order) {
+    throw new Error("Order not found for failed payment");
+  }
+
+  queueNotification(notifications, {
+    userId: order.userId,
+    type: "PAYMENT_FAILED",
+    title: "Payment failed",
+    message:
+      "Payment for order " +
+      order.orderNumber +
+      " failed. Please try again.",
+    link: "/orders/" + order.id,
+    dedupeKey:
+      "PAYMENT_FAILED:" + order.userId + ":" + payment.id,
+  });
 }
 
-async function onPaymentRefunded(tx, payment) {
-  // Per order-status.js only a DELIVERED order may move to REFUNDED. Cancelled orders stay CANCELLED;
-  // the refund itself is tracked on the payment (REFUNDED) and in payment_refunds.
+async function onPaymentRefunded(tx, payment, notifications) {
   const order = await tx.order.findUnique({
     where: { id: payment.orderId },
     include: { sellerOrders: true },
   });
-  if (!order || order.status !== "DELIVERED") return;
+
+  if (!order || order.status !== "DELIVERED") {
+    return;
+  }
 
   const parent = await tx.order.updateMany({
-    where: { id: order.id, status: "DELIVERED" },
-    data: { status: "REFUNDED" },
+    where: {
+      id: order.id,
+      status: "DELIVERED",
+    },
+    data: {
+      status: "REFUNDED",
+    },
   });
-  if (parent.count !== 1) throw new Error("Order status changed during refund");
+
+  if (parent.count !== 1) {
+    throw new Error("Order status changed during refund");
+  }
 
   await tx.orderStatusHistory.create({
     data: {
@@ -65,13 +176,23 @@ async function onPaymentRefunded(tx, payment) {
   });
 
   for (const sellerOrder of order.sellerOrders) {
-    if (sellerOrder.status !== "DELIVERED") continue;
+    if (sellerOrder.status !== "DELIVERED") {
+      continue;
+    }
 
     const updated = await tx.sellerOrder.updateMany({
-      where: { id: sellerOrder.id, status: "DELIVERED" },
-      data: { status: "REFUNDED" },
+      where: {
+        id: sellerOrder.id,
+        status: "DELIVERED",
+      },
+      data: {
+        status: "REFUNDED",
+      },
     });
-    if (updated.count !== 1) throw new Error("Seller order status changed during refund");
+
+    if (updated.count !== 1) {
+      throw new Error("Seller order status changed during refund");
+    }
 
     await tx.orderStatusHistory.create({
       data: {
@@ -84,34 +205,80 @@ async function onPaymentRefunded(tx, payment) {
       },
     });
   }
+
+  queueNotification(notifications, {
+    userId: order.userId,
+    type: "REFUND_COMPLETED",
+    title: "Refund completed",
+    message:
+      "Refund for order " + order.orderNumber + " has been completed.",
+    link: "/orders/" + order.id,
+    dedupeKey:
+      "REFUND_COMPLETED:" + order.userId + ":" + payment.id,
+  });
 }
 
-// Keeps a return in step with its Razorpay refund. Only the gateway can make a return REFUNDED.
-async function onRefundEvent(tx, { refundRow, refundStatus, notes }) {
+async function onRefundEvent(
+  tx,
+  { refundRow, refundStatus, notes, notifications }
+) {
   const returnId = notes && notes.returnId;
+
   const ret = await tx.returnRequest.findFirst({
     where: {
-      OR: [{ paymentRefundId: refundRow.id }, ...(returnId ? [{ id: returnId }] : [])],
+      OR: [
+        { paymentRefundId: refundRow.id },
+        ...(returnId ? [{ id: returnId }] : []),
+      ],
+    },
+    include: {
+      sellerOrder: {
+        include: {
+          seller: {
+            select: { userId: true },
+          },
+        },
+      },
+      order: {
+        select: {
+          id: true,
+          orderNumber: true,
+        },
+      },
     },
   });
-  if (!ret) return; // a refund that is not for a return
 
-  // A late event of an older, failed refund attempt must not change a retried return.
-  if (ret.paymentRefundId && ret.paymentRefundId !== refundRow.id) return;
+  if (!ret) {
+    return;
+  }
+
+  if (ret.paymentRefundId && ret.paymentRefundId !== refundRow.id) {
+    return;
+  }
 
   if (!ret.paymentRefundId) {
     await tx.returnRequest.update({
       where: { id: ret.id },
-      data: { paymentRefundId: refundRow.id },
+      data: {
+        paymentRefundId: refundRow.id,
+      },
     });
   }
 
   if (refundStatus === "PROCESSED") {
-    // REFUND_FAILED is allowed too: our call may have timed out although Razorpay did refund.
     const updated = await tx.returnRequest.updateMany({
-      where: { id: ret.id, status: { in: ["REFUND_INITIATED", "REFUND_FAILED"] } },
-      data: { status: "REFUNDED", refundedAt: new Date() },
+      where: {
+        id: ret.id,
+        status: {
+          in: ["REFUND_INITIATED", "REFUND_FAILED"],
+        },
+      },
+      data: {
+        status: "REFUNDED",
+        refundedAt: new Date(),
+      },
     });
+
     if (updated.count === 1) {
       await tx.returnStatusHistory.create({
         data: {
@@ -123,14 +290,60 @@ async function onRefundEvent(tx, { refundRow, refundStatus, notes }) {
           note: "Refund confirmed by payment provider",
         },
       });
+
+      queueNotification(notifications, {
+        userId: ret.userId,
+        type: "REFUND_COMPLETED",
+        title: "Refund completed",
+        message:
+          "Refund for return " +
+          ret.returnNumber +
+          " has been completed.",
+        link: "/returns/" + ret.id,
+        dedupeKey:
+          "RETURN_REFUND_COMPLETED_CUSTOMER:" +
+          ret.id +
+          ":" +
+          ret.userId,
+      });
+
+      const sellerUserId =
+        ret.sellerOrder &&
+        ret.sellerOrder.seller &&
+        ret.sellerOrder.seller.userId;
+
+      if (sellerUserId) {
+        queueNotification(notifications, {
+          userId: sellerUserId,
+          type: "RETURN_REFUND_COMPLETED",
+          title: "Return refund completed",
+          message:
+            "The refund for return " +
+            ret.returnNumber +
+            " has been completed.",
+          link: "/seller/returns/" + ret.id,
+          dedupeKey:
+            "RETURN_REFUND_COMPLETED_SELLER:" +
+            ret.id +
+            ":" +
+            sellerUserId,
+        });
+      }
     }
   }
 
   if (refundStatus === "FAILED") {
     const updated = await tx.returnRequest.updateMany({
-      where: { id: ret.id, status: "REFUND_INITIATED" },
-      data: { status: "REFUND_FAILED", refundIdempotencyKey: null },
+      where: {
+        id: ret.id,
+        status: "REFUND_INITIATED",
+      },
+      data: {
+        status: "REFUND_FAILED",
+        refundIdempotencyKey: null,
+      },
     });
+
     if (updated.count === 1) {
       await tx.returnStatusHistory.create({
         data: {
@@ -142,8 +355,26 @@ async function onRefundEvent(tx, { refundRow, refundStatus, notes }) {
           note: "Refund failed at payment provider",
         },
       });
+
+      await notifyAdmins(tx, notifications, {
+        type: "REFUND_FAILED",
+        title: "Refund failed",
+        message:
+          "Refund for return " +
+          ret.returnNumber +
+          " failed at the payment provider. Please review it.",
+        link: "/admin/returns/" + ret.id,
+        dedupeKey:
+          "REFUND_FAILED:" + ret.id + ":" + refundRow.id,
+      });
     }
   }
 }
 
-module.exports = { onPaymentCaptured, onPaymentFailed, onPaymentRefunded, onRefundEvent };
+module.exports = {
+  onPaymentCaptured,
+  onPaymentFailed,
+  onPaymentRefunded,
+  onRefundEvent,
+  notifyAdmins,
+};

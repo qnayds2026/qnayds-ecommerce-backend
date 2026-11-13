@@ -1,9 +1,15 @@
+
 const crypto = require("crypto");
 const { Prisma } = require("@prisma/client");
 const { prisma } = require("../../config/db");
 const { getApprovedSeller } = require("../../services/ownership.service");
 const ApiError = require("../../utils/ApiError");
 const { ACTIVE_STATUSES, assertTransition } = require("./return-state");
+const {
+  createNotification,
+  createManyNotifications,
+} = require("../notifications/notifications.service");
+
 // Placeholder until the Team Lead confirms the policy.
 const RETURN_WINDOW_DAYS = Number(process.env.RETURN_WINDOW_DAYS) || 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,6 +30,7 @@ async function getDeliveredAt(tx, sellerOrder) {
     },
     orderBy: { createdAt: "desc" },
   });
+
   return entry ? entry.createdAt : sellerOrder.updatedAt;
 }
 
@@ -33,38 +40,52 @@ async function createReturn(user, body) {
     where: { id: body.orderId, userId: user.id },
     include: { orderItems: true, sellerOrders: true },
   });
+
   if (!order) throw ApiError.notFound("Order not found");
 
   // 2. Every requested item must belong to this order.
   const itemsById = new Map(order.orderItems.map((i) => [i.id, i]));
+
   const selected = body.items.map((reqItem) => {
     const item = itemsById.get(reqItem.orderItemId);
+
     if (!item) {
       throw ApiError.badRequest(
         `Order item ${reqItem.orderItemId} does not belong to this order`
       );
     }
+
     return { item, quantity: reqItem.quantity };
   });
 
   // 3. One return request = one seller order.
-  const sellerOrderIds = [...new Set(selected.map((s) => s.item.sellerOrderId))];
+  const sellerOrderIds = [
+    ...new Set(selected.map((s) => s.item.sellerOrderId)),
+  ];
+
   if (sellerOrderIds.length > 1) {
     throw ApiError.badRequest(
       "Items from different sellers must be returned in separate requests"
     );
   }
-  const sellerOrder = order.sellerOrders.find((so) => so.id === sellerOrderIds[0]);
+
+  const sellerOrder = order.sellerOrders.find(
+    (so) => so.id === sellerOrderIds[0]
+  );
+
   if (!sellerOrder || sellerOrder.status !== "DELIVERED") {
     throw ApiError.badRequest("Only delivered items can be returned");
   }
 
   try {
-    return await prisma.$transaction(
+    const createdReturn = await prisma.$transaction(
       async (tx) => {
         // 4. Return window.
         const deliveredAt = await getDeliveredAt(tx, sellerOrder);
-        const deadline = new Date(deliveredAt.getTime() + RETURN_WINDOW_DAYS * DAY_MS);
+        const deadline = new Date(
+          deliveredAt.getTime() + RETURN_WINDOW_DAYS * DAY_MS
+        );
+
         if (new Date() > deadline) {
           throw ApiError.badRequest(
             `Return window of ${RETURN_WINDOW_DAYS} days is over`
@@ -76,8 +97,11 @@ async function createReturn(user, body) {
           where: { orderId: order.id, status: "CAPTURED" },
           orderBy: { capturedAt: "desc" },
         });
+
         if (!payment) {
-          throw ApiError.conflict("No completed payment found for this order");
+          throw ApiError.conflict(
+            "No completed payment found for this order"
+          );
         }
 
         // 6. Quantity check: already returned (active) quantities cannot be returned again.
@@ -89,20 +113,26 @@ async function createReturn(user, body) {
           },
           _sum: { quantity: true },
         });
+
         const returnedQty = new Map(
           already.map((r) => [r.orderItemId, r._sum.quantity || 0])
         );
 
         let refundAmount = new Prisma.Decimal(0);
+
         const itemRows = selected.map(({ item, quantity }) => {
-          const remaining = item.quantity - (returnedQty.get(item.id) || 0);
+          const remaining =
+            item.quantity - (returnedQty.get(item.id) || 0);
+
           if (quantity > remaining) {
             throw ApiError.conflict(
               `Only ${remaining} unit(s) of ${item.productName} can still be returned`
             );
           }
+
           const lineRefund = new Prisma.Decimal(item.unitPrice).mul(quantity);
           refundAmount = refundAmount.add(lineRefund);
+
           return {
             orderItemId: item.id,
             quantity,
@@ -112,7 +142,7 @@ async function createReturn(user, body) {
         });
 
         // 7. Create return + items + first audit row together.
-        return tx.returnRequest.create({
+        const createdReturn = await tx.returnRequest.create({
           data: {
             returnNumber: generateReturnNumber(),
             orderId: order.id,
@@ -137,25 +167,56 @@ async function createReturn(user, body) {
           },
           include: { items: true },
         });
+
+                return createdReturn;
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }
     );
-  } catch (err) {
-    // Two requests for the same item at the same moment: one of them must fail.
-    if (err.code === "P2034") {
-      throw ApiError.conflict("Another return request was processed at the same time, please try again");
+
+    // Notify seller only after the return transaction commits.
+    try {
+      const seller = await prisma.sellerProfile.findUnique({
+        where: { id: sellerOrder.sellerId },
+        select: { userId: true },
+      });
+
+      if (seller && seller.userId) {
+        await createNotification({
+          userId: seller.userId,
+          type: "NEW_RETURN_REQUEST",
+          title: "New Return Request",
+          message: "A customer has requested a return for order " + order.id + ".",
+          link: "/seller/returns/" + createdReturn.id,
+          dedupeKey: "return:" + createdReturn.id + ":new-request:" + seller.userId,
+        });
+      }
+    } catch (error) {
+      console.error("Seller return notification failed:", error.message);
     }
-    throw err;
+
+    return createdReturn;
+
+    } catch (error) {
+    if (error && error.code === "P2034") {
+      throw ApiError.conflict(
+        "Return request is being processed. Please try again."
+      );
+    }
+    throw error;
   }
 }
-
 const returnInclude = {
   items: true,
   history: { orderBy: { createdAt: "asc" } },
 };
 
 async function listMyReturns(user, query) {
-  const where = { userId: user.id, ...(query.status ? { status: query.status } : {}) };
+  const where = {
+    userId: user.id,
+    ...(query.status ? { status: query.status } : {}),
+  };
 
   const [items, total] = await Promise.all([
     prisma.returnRequest.findMany({
@@ -177,7 +238,9 @@ async function getMyReturn(user, returnId) {
     where: { id: returnId, userId: user.id },
     include: returnInclude,
   });
+
   if (!ret) throw ApiError.notFound("Return not found");
+
   return ret;
 }
 
@@ -186,18 +249,22 @@ async function cancelReturn(user, returnId, note) {
     const ret = await tx.returnRequest.findFirst({
       where: { id: returnId, userId: user.id },
     });
+
     if (!ret) throw ApiError.notFound("Return not found");
 
     // 409 if the move is not allowed from this status, 403 if the role may not do it.
     assertTransition(ret.status, "CANCELLED", "CUSTOMER");
 
-    // Only update if the status is still what we read (guards against a seller approving at the same time).
+    // Only update if the status is still what we read.
     const updated = await tx.returnRequest.updateMany({
       where: { id: ret.id, status: ret.status },
       data: { status: "CANCELLED", closedAt: new Date() },
     });
+
     if (updated.count === 0) {
-      throw ApiError.conflict("Return status changed, please refresh and try again");
+      throw ApiError.conflict(
+        "Return status changed, please refresh and try again"
+      );
     }
 
     await tx.returnStatusHistory.create({
@@ -243,39 +310,49 @@ async function listSellerReturns(user, query) {
 
 // Shared by seller and admin: approve or reject a REQUESTED return.
 // A seller can only decide returns of their own seller orders; an admin can decide any.
+
 async function decideReturn(user, returnId, newStatus, note) {
   const role = user.role;
   let sellerId = null;
+
   if (role === "SELLER") {
     sellerId = (await getApprovedSeller(user.id)).id;
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const ret = await tx.returnRequest.findFirst({
       where: {
         id: returnId,
         ...(sellerId ? { sellerOrder: { sellerId } } : {}),
       },
     });
-    // Another seller's return looks like a missing one.
+
     if (!ret) throw ApiError.notFound("Return not found");
 
-    // 409 for an invalid move, 403 if this role may not do it.
-    assertTransition(ret.status, newStatus, role);
+if (role === "SELLER" && ret.escalatedAt) {
+  throw ApiError.conflict(
+    "This return has been escalated and can only be decided by an admin"
+  );
+}
+
+assertTransition(ret.status, newStatus, role);
 
     const updated = await tx.returnRequest.updateMany({
       where: { id: ret.id, status: ret.status },
       data: {
         status: newStatus,
         ...(newStatus === "ITEM_RECEIVED"
-            ? { receivedAt: new Date() }
-            : { decidedAt: new Date() }),
+          ? { receivedAt: new Date() }
+          : { decidedAt: new Date() }),
         [role === "SELLER" ? "sellerNote" : "adminNote"]: note || null,
         ...(newStatus === "REJECTED" ? { closedAt: new Date() } : {}),
-        },
+      },
     });
+
     if (updated.count === 0) {
-      throw ApiError.conflict("Return status changed, please refresh and try again");
+      throw ApiError.conflict(
+        "Return status changed, please refresh and try again"
+      );
     }
 
     await tx.returnStatusHistory.create({
@@ -289,21 +366,149 @@ async function decideReturn(user, returnId, newStatus, note) {
       },
     });
 
+    const updatedReturn = await tx.returnRequest.findUnique({
+      where: { id: ret.id },
+      include: returnInclude,
+    });
+
+    return { ret, updatedReturn };
+  });
+
+  // Notify customer only after transaction commits.
+  if (newStatus === "APPROVED" || newStatus === "REJECTED") {
+    const isApproved = newStatus === "APPROVED";
+
+    try {
+      await createNotification({
+        userId: result.ret.userId,
+        type: isApproved ? "RETURN_APPROVED" : "RETURN_REJECTED",
+        title: isApproved
+          ? "Return Request Approved"
+          : "Return Request Rejected",
+        message: isApproved
+          ? `Your return request ${result.ret.returnNumber} has been approved.`
+          : `Your return request ${result.ret.returnNumber} has been rejected.`,
+        link: `/returns/${result.ret.id}`,
+        dedupeKey: `return:${result.ret.id}:${newStatus.toLowerCase()}:${result.ret.userId}`,
+      });
+    } catch (error) {
+      console.error("Return decision notification failed:", error.message);
+    }
+  }
+
+  return result.updatedReturn;
+}
+
+
+const approveReturn = (user, returnId, note) =>
+  decideReturn(user, returnId, "APPROVED", note);
+
+// Customer can request admin review only after seller rejects the return.
+async function escalateRejectedReturn(user, returnId, reason) {
+  if (user.role !== "CUSTOMER") {
+    throw ApiError.forbidden("Only customers can escalate a return");
+  }
+
+  const escalationReason = reason.trim();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const ret = await tx.returnRequest.findFirst({
+      where: {
+        id: returnId,
+        userId: user.id,
+      },
+    });
+
+    if (!ret) {
+      throw ApiError.notFound("Return not found");
+    }
+
+    if (ret.status !== "REJECTED") {
+      throw ApiError.conflict(
+        "Only rejected returns can be escalated"
+      );
+    }
+
+    if (ret.escalatedAt) {
+      throw ApiError.conflict(
+        "This return has already been escalated"
+      );
+    }
+
+    const escalatedAt = new Date();
+
+    const updated = await tx.returnRequest.updateMany({
+      where: {
+        id: ret.id,
+        userId: user.id,
+        status: "REJECTED",
+        escalatedAt: null,
+      },
+      data: {
+        escalatedAt,
+        escalationReason,
+        escalationType: "CUSTOMER",
+      },
+    });
+
+    if (updated.count === 0) {
+      throw ApiError.conflict(
+        "Return escalation failed. Please refresh and try again"
+      );
+    }
+
+    await tx.returnStatusHistory.create({
+      data: {
+        returnId: ret.id,
+        oldStatus: "REJECTED",
+        newStatus: "REJECTED",
+        changedBy: user.id,
+        actorRole: "CUSTOMER",
+        note: `Customer requested admin review: ${escalationReason}`,
+      },
+    });
+
     return tx.returnRequest.findUnique({
       where: { id: ret.id },
       include: returnInclude,
     });
   });
-}
 
-const approveReturn = (user, returnId, note) =>
-  decideReturn(user, returnId, "APPROVED", note);
+  // Notify admins only after the escalation transaction commits.
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN" },
+      select: { id: true },
+    });
+
+    await createManyNotifications(
+      admins.map((admin) => ({
+        userId: admin.id,
+        type: "RETURN_ESCALATED",
+        title: "Return Escalated for Admin Review",
+        message: `Return ${result.returnNumber} has been escalated for admin review.`,
+        link: `/admin/returns/${result.id}`,
+        dedupeKey: `RETURN_ESCALATED:${result.id}:${admin.id}`,
+      }))
+    );
+  } catch (error) {
+    console.error(
+      "Return escalation notification failed:",
+      error.message
+    );
+  }
+
+  return result;
+}
 
 const rejectReturn = (user, returnId, note) =>
   decideReturn(user, returnId, "REJECTED", note);
 
 async function listAdminReturns(query) {
-  const where = query.status ? { status: query.status } : {};
+  const where = {
+  ...(query.status ? { status: query.status } : {}),
+  ...(query.escalatedOnly ? { escalatedAt: { not: null } } : {}),
+};
 
   const [items, total] = await Promise.all([
     prisma.returnRequest.findMany({
@@ -327,10 +532,13 @@ async function addShipment(user, returnId, body) {
     const ret = await tx.returnRequest.findFirst({
       where: { id: returnId, userId: user.id },
     });
+
     if (!ret) throw ApiError.notFound("Return not found");
 
     if (ret.status !== "APPROVED") {
-      throw ApiError.conflict("Shipment details can only be added to an approved return");
+      throw ApiError.conflict(
+        "Shipment details can only be added to an approved return"
+      );
     }
 
     const updated = await tx.returnRequest.updateMany({
@@ -341,8 +549,11 @@ async function addShipment(user, returnId, body) {
         trackingUrl: body.trackingUrl || null,
       },
     });
+
     if (updated.count === 0) {
-      throw ApiError.conflict("Return status changed, please refresh and try again");
+      throw ApiError.conflict(
+        "Return status changed, please refresh and try again"
+      );
     }
 
     // Status does not change, but the action is kept in the audit trail.
@@ -375,4 +586,5 @@ module.exports = {
   approveReturn,
   rejectReturn,
   markReceived,
+  escalateRejectedReturn,
 };

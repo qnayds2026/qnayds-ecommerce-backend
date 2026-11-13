@@ -52,6 +52,26 @@ enum OrderStatus {
   REFUNDED
 }
 
+enum NotificationType {
+  ORDER_PLACED
+  ORDER_CONFIRMED
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  RETURN_APPROVED
+  RETURN_REJECTED
+  REFUND_COMPLETED
+  NEW_ORDER_RECEIVED
+  ORDER_CANCELLED_SELLER
+  NEW_RETURN_REQUEST
+  RETURN_REFUND_COMPLETED
+  PAYMENT_FLAGGED_FOR_REVIEW
+  RETURN_ESCALATED
+  REFUND_FAILED
+}
+
 model User {
   id           String     @id @default(cuid())
   name         String?
@@ -74,6 +94,7 @@ model User {
   addresses                Address[]
   payments                 Payment[]
   returnRequests           ReturnRequest[]
+  notifications            Notification[]
 
   @@map("users")
 }
@@ -528,6 +549,11 @@ model WebhookEvent {
   @@map("webhook_events")
 }
 
+enum EscalationType {
+  AUTO
+  CUSTOMER
+}
+
 enum ReturnStatus {
   REQUESTED
   APPROVED
@@ -572,13 +598,13 @@ model ReturnRequest {
   trackingNumber String?
   trackingUrl    String?
 
-  requestedAt DateTime  @default(now())
-  decidedAt   DateTime?
-  receivedAt  DateTime?
-  refundedAt  DateTime?
-  closedAt    DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  receivedAt DateTime?
+
+  escalatedAt      DateTime?
+  escalationReason String?
+  escalationType   EscalationType?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   order         Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
   sellerOrder   SellerOrder           @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
@@ -643,4 +669,24 @@ model ShipmentEvent {
   @@index([shipmentId, createdAt])
   @@index([status])
   @@map("shipment_events")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean          @default(false)
+  dedupeKey String           @unique
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
