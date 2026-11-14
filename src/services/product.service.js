@@ -28,7 +28,7 @@ async function createProduct(user, data) {
       slug: data.slug || slugify(data.name),
       description: data.description,
       brand: data.brand,
-      status: "DRAFT",
+      status: "ACTIVE",
     },
   });
 }
@@ -90,8 +90,6 @@ async function updateProduct(user, id, data) {
     await assertCategoryActive(data.categoryId);
   }
 
-  // Seller cannot change product moderation status.
-  // Only Admin can approve, reject or archive products.
   return prisma.product.update({
     where: { id },
     data,
