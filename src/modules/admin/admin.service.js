@@ -9,6 +9,18 @@ const {
   canTransitionOrderStatus,
 } = require("../orders/order-status");
 
+// Payment fields the admin needs (method, status, id for COD collect)
+const PAYMENTS_INCLUDE = {
+  select: {
+    id: true,
+    method: true,
+    status: true,
+    amount: true,
+    createdAt: true,
+  },
+  orderBy: { createdAt: "asc" },
+};
+
 async function getDashboardSummary(query = {}) {
   const { startDate, endDate } = query;
 
@@ -241,6 +253,7 @@ async function listAdminOrders(query) {
           },
         },
         orderItems: true,
+        payments: PAYMENTS_INCLUDE,
         orderStatusHistories: {
           orderBy: {
             createdAt: "asc",
@@ -306,6 +319,7 @@ async function getAdminOrderDetails(orderId) {
         },
       },
       orderItems: true,
+      payments: PAYMENTS_INCLUDE,
       orderStatusHistories: {
         orderBy: {
           createdAt: "asc",
@@ -631,7 +645,23 @@ async function listAdminShipments(query = {}) {
         },
         sellerOrder: {
           include: {
-            order: true,
+            order: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+              },
+            },
+            seller: {
+              select: {
+                id: true,
+                shopName: true,
+              },
+            },
             items: true,
           },
         },
