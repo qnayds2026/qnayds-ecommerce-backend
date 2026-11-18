@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const { OAuth2Client } = require("google-auth-library");
 // NOTE: adjust this import to match how src/config/db.js exports Prisma.
 const { prisma } = require("../config/db");
 const authConfig = require("../config/auth");
@@ -44,19 +45,10 @@ const register = async ({ name, email, password }) => {
   }
 };
 
-const login = async ({ email, password }) => {
-  const user = await prisma.user.findUnique({ where: { email } });
-
-  const passwordOk = await bcrypt.compare(
-    password,
-    user ? user.passwordHash : DUMMY_HASH
-  );
-
-  // Same generic message for unknown email and wrong password.
-  if (!user || !passwordOk) throw httpError("Invalid email or password", 401);
+const createSession = async (user) => {
   if (user.role === "CUSTOMER" && user.status === "BLOCKED") {
-  throw httpError("Your account has been blocked", 403);
-}
+    throw httpError("Your account has been blocked", 403);
+  }
 
   const accessToken = tokenService.generateAccessToken(user);
   const refresh = await tokenService.issueRefreshToken(user.id);
@@ -75,6 +67,99 @@ const login = async ({ email, password }) => {
     refreshToken: refresh.token,
     refreshExpiresAt: refresh.expiresAt,
   };
+};
+
+const login = async ({ email, password }) => {
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  const passwordOk = await bcrypt.compare(
+    password,
+    user && user.passwordHash ? user.passwordHash : DUMMY_HASH
+  );
+
+  // Same generic message for unknown email and wrong password.
+  if (!user || !user.passwordHash || !passwordOk) {
+    throw httpError("Invalid email or password", 401);
+  }
+
+  return createSession(user);
+};
+
+const googleClient = new OAuth2Client();
+
+const googleLogin = async ({ idToken }) => {
+  if (!authConfig.google.clientId) {
+    throw httpError("Google authentication is not configured", 503);
+  }
+
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: authConfig.google.clientId,
+    });
+    payload = ticket.getPayload();
+  } catch (_error) {
+    throw httpError("Invalid Google token", 401);
+  }
+
+  if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+    throw httpError("Google account email must be verified", 401);
+  }
+
+  const email = payload.email.trim().toLowerCase();
+  const googleId = payload.sub;
+  let user = await prisma.user.findUnique({ where: { googleId } });
+
+  if (user) {
+    if (user.email !== email) {
+      throw httpError("Google account email does not match the linked account", 401);
+    }
+  } else {
+    const existingEmailUser = await prisma.user.findUnique({ where: { email } });
+
+    if (existingEmailUser) {
+      if (existingEmailUser.googleId && existingEmailUser.googleId !== googleId) {
+        throw httpError("This email is linked to another Google account", 409);
+      }
+
+      user = await prisma.user.update({
+        where: { id: existingEmailUser.id },
+        data: { googleId },
+      });
+    } else {
+      try {
+        user = await prisma.user.create({
+          data: {
+            name: payload.name || payload.given_name || email.split("@")[0],
+            email,
+            googleId,
+            passwordHash: null,
+            role: "CUSTOMER",
+          },
+        });
+      } catch (error) {
+        if (error.code !== "P2002") throw error;
+        user = await prisma.user.findUnique({ where: { googleId } });
+        if (!user) {
+          const byEmail = await prisma.user.findUnique({ where: { email } });
+          if (!byEmail) throw error;
+          if (byEmail.googleId && byEmail.googleId !== googleId) {
+            throw httpError("This email is linked to another Google account", 409);
+          }
+          user = byEmail.googleId
+            ? byEmail
+            : await prisma.user.update({
+                where: { id: byEmail.id },
+                data: { googleId },
+              });
+        }
+      }
+    }
+  }
+
+  if (!user) throw httpError("Unable to sign in with Google", 401);
+  return createSession(user);
 };
 
 const refresh = async (rawRefreshToken) => {
@@ -107,4 +192,4 @@ const logout = async (rawRefreshToken) => {
   await tokenService.revokeRefreshToken(rawRefreshToken);
 };
 
-module.exports = { register, login, refresh, logout };
+module.exports = { register, login, googleLogin, refresh, logout };

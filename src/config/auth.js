@@ -36,6 +36,9 @@ const authConfig = {
       .filter(Boolean),
   },
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || "12", 10),
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || "",
+  },
 };
 
 module.exports = authConfig;

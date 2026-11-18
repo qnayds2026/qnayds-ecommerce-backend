@@ -26,6 +26,10 @@ const registerSchema = z.object({
 
 // Login does not enforce password rules, so a wrong password and a
 // badly-formed one both end up as the same generic 401 later.
+const googleLoginSchema = z.object({
+  idToken: z.string({ required_error: "Google ID token is required" }).min(1).max(10000),
+});
+
 const loginSchema = z.object({
   email,
   password: z.string({ required_error: "Password is required" }).min(1).max(200),
@@ -34,4 +38,5 @@ const loginSchema = z.object({
 module.exports = {
   registerSchema,
   loginSchema,
+  googleLoginSchema,
 };
