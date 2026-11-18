@@ -1,3 +1,4 @@
+﻿
 require("dotenv").config({ quiet: true });
 
 const express = require("express");
@@ -28,11 +29,17 @@ const sellerReturnsRoutes = require("./src/modules/returns/returns.seller.routes
 const adminReturnsRoutes = require("./src/modules/returns/returns.admin.routes");
 const paymentRoutes = require("./src/modules/payments/payments.routes");
 
+const notificationRoutes = require(
+  "./src/modules/notifications/notifications.routes"
+);
 
 const shippingRoutes = require(
   "./src/modules/shipping/shipping.routes"
 );
 
+const {
+  startReturnEscalationJob,
+} = require("./src/jobs/return-escalation.job");
 
 const {
   errorHandler,
@@ -41,10 +48,8 @@ const {
 
 const app = express();
 
-
-// Razorpay webhook: MUST be mounted before express.json()/urlencoded so the raw body is preserved
+// Razorpay webhook must be mounted before express.json()
 app.use("/api/v1/webhooks", webhookRoutes);
-
 
 // Middleware
 app.use(express.urlencoded({ extended: true }));
@@ -83,11 +88,11 @@ app.use("/api/v1", imageRoutes);
 app.use("/api/v1", inventoryRoutes);
 app.use("/api/v1", ordersRoutes);
 app.use("/api/v1/admin", adminRoutes);
-
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
 app.use("/api/v1/addresses", addressRoutes);
 app.use("/api/v1", shippingRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 
 // Error handlers
 app.use(notFoundHandler);
@@ -99,16 +104,14 @@ async function startServer() {
   try {
     await connectDatabase();
 
-
-    app.use("/api/v1", shippingRoutes);
-
+    startReturnEscalationJob();
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running at http://localhost:${PORT}`);
+      console.log(`Server running at http://localhost:${PORT}`);
     });
   } catch (error) {
-    console.error("❌ Server startup failed:", error.message);
-    process.exitCode = 1;
+    console.error("Failed to start server:", error);
+    process.exit(1);
   }
 }
 
@@ -116,5 +119,5 @@ if (require.main === module) {
   startServer();
 }
 
-
 module.exports = app;
+

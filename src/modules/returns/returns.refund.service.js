@@ -4,7 +4,9 @@ const { prisma } = require("../../config/db");
 const ApiError = require("../../utils/ApiError");
 const razorpay = require("../payments/razorpay.service");
 const { assertTransition } = require("./return-state");
-
+const {
+  createManyNotifications,
+} = require("../notifications/notifications.service");
 const returnInclude = {
   items: true,
   history: { orderBy: { createdAt: "asc" } },
@@ -30,12 +32,13 @@ function isDefiniteRejection(err) {
 }
 
 async function markRefundFailed(returnId, message) {
-  await prisma.$transaction(async (tx) => {
+  const failedReturn = await prisma.$transaction(async (tx) => {
     const updated = await tx.returnRequest.updateMany({
       where: { id: returnId, status: "REFUND_INITIATED" },
       data: { status: "REFUND_FAILED", refundIdempotencyKey: null },
     });
-    if (updated.count === 0) return;
+
+    if (updated.count === 0) return null;
 
     await tx.returnStatusHistory.create({
       data: {
@@ -47,9 +50,41 @@ async function markRefundFailed(returnId, message) {
         note: `Refund request failed: ${message}`,
       },
     });
-  });
-}
 
+    return tx.returnRequest.findUnique({
+      where: { id: returnId },
+      select: {
+        id: true,
+        returnNumber: true,
+      },
+    });
+  });
+
+  if (!failedReturn) return;
+
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN" },
+      select: { id: true },
+    });
+
+    await createManyNotifications(
+      admins.map((admin) => ({
+        userId: admin.id,
+        type: "REFUND_FAILED",
+        title: "Refund failed",
+        message: `Refund for return ${failedReturn.returnNumber} failed: ${message}`,
+        link: `/admin/returns/${failedReturn.id}`,
+        dedupeKey: `REFUND_FAILED:${failedReturn.id}:${admin.id}`,
+      }))
+    );
+  } catch (error) {
+    console.error(
+      "[notifications] Admin refund failure notification failed:",
+      error.message
+    );
+  }
+}
 async function refundReturn(user, returnId, note) {
   // Fail before anything is changed if Razorpay is not configured.
   razorpay.assertConfigured();

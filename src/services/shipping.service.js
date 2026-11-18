@@ -1,3 +1,4 @@
+
 const { prisma } = require("../config/db");
 const ApiError = require("../utils/ApiError");
 
@@ -9,6 +10,10 @@ const {
 const {
   canTransitionOrderStatus,
 } = require("../modules/orders/order-status");
+
+const {
+  createManyNotifications,
+} = require("../modules/notifications/notifications.service");
 
 async function createShipment(user, data) {
   return prisma.$transaction(async (tx) => {
@@ -34,22 +39,18 @@ async function createShipment(user, data) {
     });
 
     if (!sellerOrder) {
-      throw ApiError.notFound("Seller order not found")
+      throw ApiError.notFound("Seller order not found");
     }
 
     if (sellerOrder.shipment) {
-      throw ApiError.conflict("Shipment already exists")
+      throw ApiError.conflict("Shipment already exists");
     }
 
-    if (
-  !["CONFIRMED", "PROCESSING"].includes(
-    sellerOrder.status
-  )
-) {
-  throw ApiError.badRequest(
-    "Seller order is not eligible for shipment"
-  );
-}
+    if (!["CONFIRMED", "PROCESSING"].includes(sellerOrder.status)) {
+      throw ApiError.badRequest(
+        "Seller order is not eligible for shipment"
+      );
+    }
 
     const shipment = await tx.shipment.create({
       data: {
@@ -58,8 +59,7 @@ async function createShipment(user, data) {
         trackingNumber: data.trackingNumber,
         trackingUrl: data.trackingUrl,
         status: SHIPPING_STATUS.READY_TO_SHIP,
-        estimatedDeliveryAt:
-          data.estimatedDeliveryAt,
+        estimatedDeliveryAt: data.estimatedDeliveryAt,
       },
     });
 
@@ -162,11 +162,9 @@ async function syncParentOrderStatus(tx, orderId, changedBy) {
 }
 
 async function updateShipmentStatus(user, shipmentId, data) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const seller = await tx.sellerProfile.findUnique({
-      where: {
-        userId: user.id,
-      },
+      where: { userId: user.id },
     });
 
     if (!seller) {
@@ -181,7 +179,11 @@ async function updateShipmentStatus(user, shipmentId, data) {
         },
       },
       include: {
-        sellerOrder: true,
+        sellerOrder: {
+          include: {
+            order: true,
+          },
+        },
       },
     });
 
@@ -189,12 +191,7 @@ async function updateShipmentStatus(user, shipmentId, data) {
       throw ApiError.notFound("Shipment not found");
     }
 
-    if (
-      !canTransitionShippingStatus(
-        shipment.status,
-        data.status
-      )
-    ) {
+    if (!canTransitionShippingStatus(shipment.status, data.status)) {
       throw ApiError.badRequest(
         "Invalid shipment status transition"
       );
@@ -202,7 +199,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
 
     const sellerOrder = shipment.sellerOrder;
 
-    // Order status must also allow the corresponding transition
     if (
       [SHIPPING_STATUS.SHIPPED, SHIPPING_STATUS.DELIVERED].includes(
         data.status
@@ -214,7 +210,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
       );
     }
 
-    // Prevent concurrent shipment status updates
     const shipmentUpdate = await tx.shipment.updateMany({
       where: {
         id: shipment.id,
@@ -234,7 +229,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
       );
     }
 
-    // Save shipment tracking history
     await tx.shipmentEvent.create({
       data: {
         shipmentId: shipment.id,
@@ -245,7 +239,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
       },
     });
 
-    // Synchronize seller order when shipped or delivered
     if (
       [SHIPPING_STATUS.SHIPPED, SHIPPING_STATUS.DELIVERED].includes(
         data.status
@@ -268,7 +261,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
         );
       }
 
-      // Record seller order status history
       await tx.orderStatusHistory.create({
         data: {
           orderId: sellerOrder.orderId,
@@ -280,7 +272,6 @@ async function updateShipmentStatus(user, shipmentId, data) {
         },
       });
 
-      // Synchronize parent order status
       await syncParentOrderStatus(
         tx,
         sellerOrder.orderId,
@@ -288,20 +279,40 @@ async function updateShipmentStatus(user, shipmentId, data) {
       );
     }
 
-    return tx.shipment.findUnique({
-      where: {
-        id: shipment.id,
-      },
+    const updatedShipment = await tx.shipment.findUnique({
+      where: { id: shipment.id },
       include: {
         events: {
-          orderBy: {
-            createdAt: "asc",
-          },
+          orderBy: { createdAt: "asc" },
         },
         sellerOrder: true,
       },
     });
+
+    return {
+      shipment: updatedShipment,
+      customerUserId: sellerOrder.order.userId,
+      orderNumber: sellerOrder.order.orderNumber,
+      orderId: sellerOrder.orderId,
+      sellerOrderId: sellerOrder.id,
+    };
   });
+
+  // Notify customer when shipment is delivered.
+  if (data.status === SHIPPING_STATUS.DELIVERED) {
+    await createManyNotifications([
+      {
+        userId: result.customerUserId,
+        type: "ORDER_DELIVERED",
+        title: "Order delivered",
+        message: `Your order ${result.orderNumber} has been delivered.`,
+        link: `/orders/${result.orderId}`,
+        dedupeKey: `ORDER_DELIVERED:${result.customerUserId}:${result.sellerOrderId}`,
+      },
+    ]);
+  }
+
+  return result.shipment;
 }
 
 async function getSellerShipments(user) {
@@ -340,10 +351,7 @@ async function getSellerShipments(user) {
   });
 }
 
-async function getSellerShipmentById(
-  user,
-  shipmentId
-) {
+async function getSellerShipmentById(user, shipmentId) {
   const seller = await prisma.sellerProfile.findUnique({
     where: {
       userId: user.id,

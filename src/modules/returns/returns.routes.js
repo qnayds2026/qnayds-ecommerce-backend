@@ -41,6 +41,18 @@ router.patch(
   controller.cancelReturn
 );
 
+// Customer requests admin review after seller rejects a return.
+router.post(
+  "/:returnId/escalate",
+  authenticate,
+  authorize("CUSTOMER"),
+  validate({
+    params: validation.returnIdParams,
+    body: validation.escalateReturnBody,
+  }),
+  controller.escalateReturn
+);
+
 // Customer adds the courier details of the parcel being sent back.
 router.patch(
   "/:returnId/shipment",
