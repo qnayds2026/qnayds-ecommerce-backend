@@ -44,6 +44,19 @@ const login = async (req, res, next) => {
   }
 };
 
+
+const googleLogin = async (req, res, next) => {
+  try {
+    const { user, accessToken, refreshToken, refreshExpiresAt } =
+      await authService.googleLogin(req.body);
+
+    setRefreshCookie(res, refreshToken, refreshExpiresAt);
+    return res.status(200).json({ user, accessToken });
+  } catch (err) {
+    return handleError(err, res, next);
+  }
+};
+
 const refresh = async (req, res, next) => {
   try {
     const rawToken = req.cookies?.[COOKIE_NAME];
@@ -72,4 +85,4 @@ const logout = async (req, res, next) => {
 // authenticate middleware already loaded a safe user into req.user.
 const me = (req, res) => res.status(200).json({ user: req.user });
 
-module.exports = { register, login, refresh, logout, me };
+module.exports = { register, login, googleLogin, refresh, logout, me };

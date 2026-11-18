@@ -1,5 +1,4 @@
-﻿
-require("dotenv").config({ quiet: true });
+﻿require("dotenv").config({ quiet: true });
 
 const express = require("express");
 const cors = require("cors");
@@ -9,6 +8,7 @@ const cookieParser = require("cookie-parser");
 const { connectDatabase } = require("./src/config/db");
 const authConfig = require("./src/config/auth");
 
+// Routes
 const authRoutes = require("./src/routes/auth.routes");
 const usersRoutes = require("./src/routes/users.routes");
 const sellerRoutes = require("./src/routes/seller.routes");
@@ -20,6 +20,7 @@ const inventoryRoutes = require("./src/routes/inventory.routes");
 const cartRoutes = require("./src/routes/cart.routes");
 const wishlistRoutes = require("./src/routes/wishlist.routes");
 const addressRoutes = require("./src/routes/addresses.routes");
+
 const ordersRoutes = require("./src/modules/orders/orders.routes");
 const adminRoutes = require("./src/modules/admin/admin.routes");
 const webhookRoutes = require("./src/modules/webhooks/webhooks.routes");
@@ -28,14 +29,8 @@ const returnsRoutes = require("./src/modules/returns/returns.routes");
 const sellerReturnsRoutes = require("./src/modules/returns/returns.seller.routes");
 const adminReturnsRoutes = require("./src/modules/returns/returns.admin.routes");
 const paymentRoutes = require("./src/modules/payments/payments.routes");
-
-const notificationRoutes = require(
-  "./src/modules/notifications/notifications.routes"
-);
-
-const shippingRoutes = require(
-  "./src/modules/shipping/shipping.routes"
-);
+const notificationRoutes = require("./src/modules/notifications/notifications.routes");
+const shippingRoutes = require("./src/modules/shipping/shipping.routes");
 
 const {
   startReturnEscalationJob,
@@ -48,27 +43,37 @@ const {
 
 const app = express();
 
-// Razorpay webhook must be mounted before express.json()
-app.use("/api/v1/webhooks", webhookRoutes);
+// Trust Railway's reverse proxy
+app.set("trust proxy", 1);
 
-// Middleware
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(cookieParser());
+// Security middleware
 app.use(helmet());
 
+// CORS configuration
 app.use(
   cors({
     origin: authConfig.cors.allowedOrigins,
     credentials: true,
-  })
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
 );
 
-// Test route
+// Razorpay webhook must be mounted before express.json()
+// Ensure the webhook router uses express.raw() for its webhook endpoint.
+app.use("/api/v1/webhooks", webhookRoutes);
+
+// Body parsers
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(cookieParser());
+
+// Health check route
 app.get("/", (req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
-    message: "Backend server is running smoothly!",
+    message: "QNAYDS E-commerce Backend is running!",
+    environment: process.env.NODE_ENV || "development",
   });
 });
 
@@ -94,20 +99,26 @@ app.use("/api/v1/addresses", addressRoutes);
 app.use("/api/v1", shippingRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 
-// Error handlers
+// Error handlers (must remain last)
 app.use(notFoundHandler);
 app.use(errorHandler);
 
+// Railway dynamically assigns PORT
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
+    // Connect database before accepting requests
     await connectDatabase();
 
+    console.log("PostgreSQL connected successfully!");
+
+    // Start background jobs
     startReturnEscalationJob();
 
-    app.listen(PORT, () => {
-      console.log(`Server running at http://localhost:${PORT}`);
+    // Start HTTP server
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
     });
   } catch (error) {
     console.error("Failed to start server:", error);
@@ -115,9 +126,9 @@ async function startServer() {
   }
 }
 
+// Start only when executed directly
 if (require.main === module) {
   startServer();
 }
 
 module.exports = app;
-

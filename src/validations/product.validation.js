@@ -26,6 +26,7 @@ const updateProductBody = z
     slug,
     description: z.string().trim().max(5000),
     brand: z.string().trim().max(100),
+    status: z.enum(["ACTIVE", "DRAFT", "ARCHIVED"]),
   })
   .partial()
   .refine(
