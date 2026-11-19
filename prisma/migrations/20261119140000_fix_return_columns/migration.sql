@@ -1,0 +1,16 @@
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'EscalationType') THEN
+    CREATE TYPE "EscalationType" AS ENUM ('AUTO', 'CUSTOMER');
+  END IF;
+END
+$$;
+
+ALTER TABLE "return_requests"
+  ADD COLUMN IF NOT EXISTS "escalatedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "escalationReason" TEXT,
+  ADD COLUMN IF NOT EXISTS "escalationType" "EscalationType",
+  ADD COLUMN IF NOT EXISTS "requestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "decidedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "refundedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "closedAt" TIMESTAMP(3);
