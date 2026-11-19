@@ -1,5 +1,4 @@
-﻿
-const crypto = require("crypto");
+﻿const crypto = require("crypto");
 const { Prisma } = require("@prisma/client");
 const { prisma } = require("../config/db");
 const ApiError = require("../utils/ApiError");
@@ -283,7 +282,21 @@ async function getSellerOrderById(user, orderId) {
       sellerId: seller.id,
     },
     include: {
-      order: true,
+      order: {
+        include: {
+          // Seller-inu method/status/amount mathram; gateway ids onnum illa
+          payments: {
+            select: {
+              id: true,
+              method: true,
+              status: true,
+              amount: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      },
       items: true,
       shipment: true,
       statusHistory: {
@@ -1106,5 +1119,3 @@ module.exports = {
   cancelCustomerOrder,
   adminListOrders,
 };
-
-
