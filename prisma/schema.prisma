@@ -601,6 +601,11 @@ model ReturnRequest {
 
   receivedAt DateTime?
 
+  requestedAt DateTime  @default(now())
+  decidedAt   DateTime?
+  refundedAt  DateTime?
+  closedAt    DateTime?
+
   escalatedAt      DateTime?
   escalationReason String?
   escalationType   EscalationType?

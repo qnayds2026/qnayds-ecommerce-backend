@@ -283,7 +283,20 @@ async function getSellerOrderById(user, orderId) {
       sellerId: seller.id,
     },
     include: {
-      order: true,
+      order: {
+        include: {
+          payments: {
+            select: {
+              id: true,
+              method: true,
+              status: true,
+              amount: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      },
       items: true,
       shipment: true,
       statusHistory: {
@@ -317,7 +330,7 @@ async function updateSellerOrderStatus(user, orderId, body) {
   });
 
   if (!sellerOrder) {
-    throw ApiError.notFound("Seller order not found");
+    throw ApiError.notFound("Order not found");
   }
 
   if (body.status === "SHIPPED") {
@@ -651,134 +664,147 @@ async function createOrder(user, body = {}, idempotencyKey) {
   if (existingOrder) return existingOrder;
 
   try {
-    const createdOrder = await prisma.$transaction(async (tx) => {
-      await validateCartForCheckout(user.id, tx);
+    const createdOrder = await prisma.$transaction(
+      async (tx) => {
+        await validateCartForCheckout(user.id, tx);
 
-      const cart = await tx.cart.findUnique({
-        where: { userId: user.id },
-        include: {
-          items: {
-            include: {
-              variant: {
-                include: {
-                  product: true,
-                  inventory: true,
+        const cart = await tx.cart.findUnique({
+          where: { userId: user.id },
+          include: {
+            items: {
+              include: {
+                variant: {
+                  include: {
+                    product: true,
+                    inventory: true,
+                  },
                 },
               },
             },
           },
-        },
-      });
-
-      if (!cart || cart.items.length === 0) {
-        throw ApiError.badRequest("Cart is empty");
-      }
-
-      const address = body.addressId
-        ? await tx.address.findFirst({
-            where: { id: body.addressId, userId: user.id },
-          })
-        : await tx.address.findFirst({
-            where: { userId: user.id, isDefault: true },
-          });
-
-      if (!address) {
-        throw ApiError.badRequest("Valid delivery address not found");
-      }
-
-      const sellerGroups = new Map();
-      let grandTotal = new Prisma.Decimal(0);
-
-      for (const cartItem of cart.items) {
-        const variant = cartItem.variant;
-        const product = variant.product;
-        const quantity = cartItem.quantity;
-
-        if (
-          !variant.isActive ||
-          product.status !== "ACTIVE" ||
-          !variant.inventory
-        ) {
-          throw ApiError.conflict(
-            `Product is unavailable: ${product.name}`
-          );
-        }
-
-        const available =
-          variant.inventory.quantityAvailable -
-          variant.inventory.quantityReserved;
-
-        if (available < quantity) {
-          throw ApiError.conflict(
-            `Insufficient stock for ${product.name}`
-          );
-        }
-
-        const unitPrice = new Prisma.Decimal(variant.price.toString());
-        const subtotal = unitPrice.mul(quantity);
-
-        grandTotal = grandTotal.plus(subtotal);
-
-        const sellerId = product.sellerId;
-
-        if (!sellerGroups.has(sellerId)) {
-          sellerGroups.set(sellerId, {
-            totalAmount: new Prisma.Decimal(0),
-            items: [],
-          });
-        }
-
-        const group = sellerGroups.get(sellerId);
-        group.totalAmount = group.totalAmount.plus(subtotal);
-
-        group.items.push({
-          variantId: variant.id,
-          productName: product.name,
-          variantName: variant.name,
-          variantAttributes: variant.attributes ?? null,
-          sku: variant.sku,
-          unitPrice,
-          quantity,
-          subtotal,
         });
-      }
 
-      const order = await tx.order.create({
-        data: {
-          orderNumber: generateOrderNumber(),
-          userId: user.id,
-          idempotencyKey: normalizedIdempotencyKey,
-          status: "PENDING_PAYMENT",
-          totalAmount: grandTotal,
-          currency: "INR",
+        if (!cart || cart.items.length === 0) {
+          throw ApiError.badRequest("Cart is empty");
+        }
 
-          deliveryName: address.recipientName,
-          deliveryPhone: address.phone,
-          deliveryAddressLine1: address.addressLine1,
-          deliveryAddressLine2: address.addressLine2,
-          deliveryCity: address.city,
-          deliveryState: address.state,
-          deliveryPostalCode: address.postalCode,
-          deliveryCountry: address.country,
-        },
-      });
+        const address = body.addressId
+          ? await tx.address.findFirst({
+              where: { id: body.addressId, userId: user.id },
+            })
+          : await tx.address.findFirst({
+              where: { userId: user.id, isDefault: true },
+            });
 
-      for (const [sellerId, group] of sellerGroups) {
-        const sellerOrder = await tx.sellerOrder.create({
+        if (!address) {
+          throw ApiError.badRequest("Valid delivery address not found");
+        }
+
+        const sellerGroups = new Map();
+        let grandTotal = new Prisma.Decimal(0);
+
+        for (const cartItem of cart.items) {
+          const variant = cartItem.variant;
+          const product = variant.product;
+          const quantity = cartItem.quantity;
+
+          if (
+            !variant.isActive ||
+            product.status !== "ACTIVE" ||
+            !variant.inventory
+          ) {
+            throw ApiError.conflict(
+              `Product is unavailable: ${product.name}`
+            );
+          }
+
+          const available =
+            variant.inventory.quantityAvailable -
+            variant.inventory.quantityReserved;
+
+          if (available < quantity) {
+            throw ApiError.conflict(
+              `Insufficient stock for ${product.name}`
+            );
+          }
+
+          const unitPrice = new Prisma.Decimal(variant.price.toString());
+          const subtotal = unitPrice.mul(quantity);
+
+          grandTotal = grandTotal.plus(subtotal);
+
+          const sellerId = product.sellerId;
+
+          if (!sellerGroups.has(sellerId)) {
+            sellerGroups.set(sellerId, {
+              totalAmount: new Prisma.Decimal(0),
+              items: [],
+            });
+          }
+
+          const group = sellerGroups.get(sellerId);
+          group.totalAmount = group.totalAmount.plus(subtotal);
+
+          group.items.push({
+            variantId: variant.id,
+            productName: product.name,
+            variantName: variant.name,
+            variantAttributes: variant.attributes ?? null,
+            sku: variant.sku,
+            unitPrice,
+            quantity,
+            subtotal,
+          });
+        }
+
+        const order = await tx.order.create({
           data: {
-            orderId: order.id,
-            sellerId,
+            orderNumber: generateOrderNumber(),
+            userId: user.id,
+            idempotencyKey: normalizedIdempotencyKey,
             status: "PENDING_PAYMENT",
-            totalAmount: group.totalAmount,
+            totalAmount: grandTotal,
+            currency: "INR",
+
+            deliveryName: address.recipientName,
+            deliveryPhone: address.phone,
+            deliveryAddressLine1: address.addressLine1,
+            deliveryAddressLine2: address.addressLine2,
+            deliveryCity: address.city,
+            deliveryState: address.state,
+            deliveryPostalCode: address.postalCode,
+            deliveryCountry: address.country,
           },
         });
 
-        for (const item of group.items) {
-          await tx.orderItem.create({
+        for (const [sellerId, group] of sellerGroups) {
+          const sellerOrder = await tx.sellerOrder.create({
+            data: {
+              orderId: order.id,
+              sellerId,
+              status: "PENDING_PAYMENT",
+              totalAmount: group.totalAmount,
+            },
+          });
+
+          for (const item of group.items) {
+            await tx.orderItem.create({
+              data: {
+                orderId: order.id,
+                sellerOrderId: sellerOrder.id,
+                ...item,
+              },
+            });
+          }
+
+          await tx.orderStatusHistory.create({
             data: {
               orderId: order.id,
               sellerOrderId: sellerOrder.id,
-              ...item,
+              oldStatus: null,
+              newStatus: "PENDING_PAYMENT",
+              changedBy: user.id,
+              note: "Order created",
             },
           });
         }
@@ -786,64 +812,57 @@ async function createOrder(user, body = {}, idempotencyKey) {
         await tx.orderStatusHistory.create({
           data: {
             orderId: order.id,
-            sellerOrderId: sellerOrder.id,
             oldStatus: null,
             newStatus: "PENDING_PAYMENT",
             changedBy: user.id,
             note: "Order created",
           },
         });
-      }
 
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId: order.id,
-          oldStatus: null,
-          newStatus: "PENDING_PAYMENT",
-          changedBy: user.id,
-          note: "Order created",
-        },
-      });
+        for (const cartItem of cart.items) {
+          const quantity = cartItem.quantity;
+          const variantId = cartItem.variantId;
 
-      for (const cartItem of cart.items) {
-        const quantity = cartItem.quantity;
-        const variantId = cartItem.variantId;
+          const reserved = await tx.$executeRaw`
+            UPDATE "inventory"
+            SET "quantityReserved" = "quantityReserved" + ${quantity},
+                "updatedAt" = NOW()
+            WHERE "variantId" = ${variantId}
+              AND ("quantityAvailable" - "quantityReserved") >= ${quantity}
+          `;
 
-        const reserved = await tx.$executeRaw`
-          UPDATE "inventory"
-          SET "quantityReserved" = "quantityReserved" + ${quantity},
-              "updatedAt" = NOW()
-          WHERE "variantId" = ${variantId}
-            AND ("quantityAvailable" - "quantityReserved") >= ${quantity}
-        `;
-
-        if (reserved !== 1) {
-          throw ApiError.conflict(
-            `Stock changed while placing order for ${cartItem.variant.product.name}`
-          );
+          if (reserved !== 1) {
+            throw ApiError.conflict(
+              `Stock changed while placing order for ${cartItem.variant.product.name}`
+            );
+          }
         }
-      }
 
-      await tx.cartItem.deleteMany({
-        where: { cartId: cart.id },
-      });
+        await tx.cartItem.deleteMany({
+          where: { cartId: cart.id },
+        });
 
-      return tx.order.findUnique({
-        where: { id: order.id },
-        include: {
-          sellerOrders: {
-            include: {
-              items: true,
-              shipment: true,
+        return tx.order.findUnique({
+          where: { id: order.id },
+          include: {
+            sellerOrders: {
+              include: {
+                items: true,
+                shipment: true,
+              },
+            },
+            orderItems: true,
+            orderStatusHistories: {
+              orderBy: { createdAt: "desc" },
             },
           },
-          orderItems: true,
-          orderStatusHistories: {
-            orderBy: { createdAt: "desc" },
-          },
-        },
-      });
-    });
+        });
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      }
+    );
 
     await notifyOrderPlaced(createdOrder);
 
@@ -869,8 +888,6 @@ async function createOrder(user, body = {}, idempotencyKey) {
 }
 
 // Admin: list ALL customer orders with pagination, status filter and search.
-// Search matches order number, customer name or customer email.
-// Customer details are loaded with a separate query (no relation name needed).
 async function adminListOrders({ page = 1, limit = 10, status, search }) {
   const skip = (page - 1) * limit;
 
@@ -935,6 +952,7 @@ async function adminListOrders({ page = 1, limit = 10, status, search }) {
     },
   };
 }
+
 async function cancelCustomerOrder(user, orderId, body) {
   const cancelledOrder = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findFirst({
@@ -1106,5 +1124,3 @@ module.exports = {
   cancelCustomerOrder,
   adminListOrders,
 };
-
-
