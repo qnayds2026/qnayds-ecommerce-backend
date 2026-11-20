@@ -16,7 +16,6 @@ async function assertCategoryActive(categoryId) {
 }
 
 async function createProduct(user, data) {
-  // sellerId client-il ninnalla, login user-inte approved profile-il ninnu
   const seller = await getApprovedSeller(user.id);
   await assertCategoryActive(data.categoryId);
 
@@ -54,7 +53,7 @@ async function listProducts({ page, limit, q, categoryId, brand }) {
       take: limit,
       orderBy: { createdAt: "desc" },
       include: {
-        images: { orderBy: { sortOrder: "asc" }, take: 1 },
+        images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], take: 1 },
         variants: {
           where: { isActive: true },
           select: { id: true, price: true },
@@ -75,13 +74,12 @@ async function getProductById(id) {
     where: { id, status: "ACTIVE" },
     include: {
       variants: { where: { isActive: true }, include: { inventory: true } },
-      images: { orderBy: { sortOrder: "asc" } },
-    },
+      images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+},
   });
   if (!product) throw ApiError.notFound("Product not found");
   return product;
 }
-
 
 async function updateProduct(user, id, data) {
   const product = await assertCanManageProduct(user, id);
@@ -96,13 +94,11 @@ async function updateProduct(user, id, data) {
   });
 }
 
-// Hard delete illa, archive maathram (orders reference cheyyaam)
 async function archiveProduct(user, id) {
   await assertCanManageProduct(user, id);
   return prisma.product.update({ where: { id }, data: { status: "ARCHIVED" } });
 }
 
-// Seller-inte swantham products (drafts ulppede)
 async function listMyProducts(user) {
   const seller = await getSellerByUser(user.id);
   if (!seller) throw ApiError.forbidden("Seller profile required");
@@ -110,6 +106,10 @@ async function listMyProducts(user) {
     where: { sellerId: seller.id },
     orderBy: { createdAt: "desc" },
     take: 100,
+    include: {
+  images: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+  variants: { include: { inventory: true } },
+},
   });
 }
 

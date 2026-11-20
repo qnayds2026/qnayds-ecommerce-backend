@@ -4,7 +4,16 @@ const { assertCanManageProduct } = require("./ownership.service");
 
 async function addImage(user, productId, data) {
   await assertCanManageProduct(user, productId);
-  return prisma.productImage.create({ data: { ...data, productId } });
+
+  const last = await prisma.productImage.findFirst({
+    where: { productId },
+    orderBy: { sortOrder: "desc" },
+  });
+  const sortOrder = last ? last.sortOrder + 1 : 0;
+
+  return prisma.productImage.create({
+    data: { ...data, sortOrder, productId },
+  });
 }
 
 async function getImageOrThrow(id) {
