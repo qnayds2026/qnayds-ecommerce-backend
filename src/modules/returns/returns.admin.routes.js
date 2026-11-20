@@ -37,6 +37,16 @@ router.post(
   validate({ params: validation.returnIdParams, body: validation.refundReturnBody }),
   controller.refundReturn
 );
+
+// COD only: the admin has paid the customer manually and enters the UTR.
+router.patch(
+  "/:returnId/refund/confirm",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ params: validation.returnIdParams, body: validation.confirmCodRefundBody }),
+  controller.confirmCodRefund
+);
+
 router.patch(
   "/:returnId/received",
   authenticate,
@@ -44,4 +54,13 @@ router.patch(
   validate({ params: validation.returnIdParams, body: validation.receivedReturnBody }),
   controller.markReceived
 );
+
+router.patch(
+  "/:returnId/refund/fail",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ params: validation.returnIdParams, body: validation.failCodRefundBody }),
+  controller.failCodRefund
+);
+
 module.exports = router;

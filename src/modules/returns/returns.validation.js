@@ -1,5 +1,25 @@
 const { z } = require("zod");
 
+const refundDetailsSchema = z.discriminatedUnion("refundMethod", [
+  z.object({
+    refundMethod: z.literal("UPI"),
+    refundUpiId: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/, "Valid UPI ID venam"),
+  }),
+  z.object({
+    refundMethod: z.literal("BANK"),
+    refundAccountName: z.string().trim().min(2).max(100),
+    refundAccountNumber: z.string().trim().regex(/^\d{9,18}$/, "Account number 9-18 digits aayirikkanam"),
+    refundIfsc: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Valid IFSC venam"),
+  }),
+]);
+
 const RETURN_REASONS = [
   "DEFECTIVE",
   "WRONG_ITEM",
@@ -23,6 +43,11 @@ const createReturnBody = z
       errorMap: () => ({ message: "Invalid return reason" }),
     }),
     customerNote: optionalNote,
+    refundMethod: z.enum(["UPI", "BANK"]).optional(),
+    refundUpiId: z.string().optional(),
+    refundAccountName: z.string().optional(),
+    refundAccountNumber: z.string().optional(),
+    refundIfsc: z.string().optional(),
     items: z
       .array(
         z
@@ -42,9 +67,25 @@ const createReturnBody = z
     (data) => new Set(data.items.map((i) => i.orderItemId)).size === data.items.length,
     { message: "Same item cannot be added twice", path: ["items"] }
   )
-  .refine((data) => data.reason !== "OTHER" || Boolean(data.customerNote), {
+    .refine((data) => data.reason !== "OTHER" || Boolean(data.customerNote), {
     message: "Please describe the reason in the note",
     path: ["customerNote"],
+  })
+  .transform((data, ctx) => {
+    if (!data.refundMethod) return data;
+
+    const parsed = refundDetailsSchema.safeParse(data);
+    if (!parsed.success) {
+      parsed.error.issues.forEach((issue) =>
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: issue.message,
+          path: issue.path,
+        })
+      );
+      return z.NEVER;
+    }
+    return { ...data, ...parsed.data };
   });
 const returnIdParams = z.object({
   returnId: idString("returnId"),
@@ -80,6 +121,29 @@ const escalateReturnBody = z
 
 // Admin refund: note is optional.
 const refundReturnBody = z.object({ note: optionalNote }).strict();
+
+// Admin confirms a manual COD refund by entering the UTR / bank reference number.
+const confirmCodRefundBody = z
+  .object({
+    utr: z
+      .string({ required_error: "UTR number is required" })
+      .trim()
+      .regex(/^[A-Za-z0-9]{6,30}$/, "UTR must be 6-30 letters or digits")
+      .transform((value) => value.toUpperCase()),
+    note: optionalNote,
+  })
+  .strict();
+
+  // Admin marks a manual COD refund as failed: the reason is required for the audit trail.
+const failCodRefundBody = z
+  .object({
+    note: z
+      .string({ required_error: "A failure note is required" })
+      .trim()
+      .min(3, "A failure note is required")
+      .max(500, "Note must be 500 characters or less"),
+  })
+  .strict();
 
 // List filters (my / seller / admin lists).
 const listReturnsQuery = z.object({
@@ -134,4 +198,7 @@ module.exports = {
   receivedReturnBody,
   listReturnsQuery,
   escalateReturnBody,
+  confirmCodRefundBody,
+  failCodRefundBody,
+  refundDetailsSchema
 };

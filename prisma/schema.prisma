@@ -575,6 +575,10 @@ enum ReturnReason {
   CHANGED_MIND
   OTHER
 }
+enum RefundMethod {
+  UPI
+  BANK
+}
 
 // One return request belongs to one seller order. Items can be partial.
 model ReturnRequest {
@@ -594,6 +598,13 @@ model ReturnRequest {
   paymentId            String?
   paymentRefundId      String? @unique
   refundIdempotencyKey String? @unique
+
+  refundMethod          RefundMethod?
+  refundUpiId           String?
+  refundAccountName     String?
+  refundAccountNumber   String?
+  refundIfsc            String?
+  manualRefundReference String?
 
   carrierName    String?
   trackingNumber String?
