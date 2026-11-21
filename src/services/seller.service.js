@@ -17,27 +17,39 @@ async function createSellerProfile(userId, data) {
     throw ApiError.conflict("Seller profile already exists");
   }
 
-  return prisma.sellerProfile.create({
-    data: {
-      userId,
-      shopName: data.shopName,
-      description: data.description,
-      gstNumber: data.gstNumber || null,
-      idProofType: data.idProofType,
-      // Aadhaar: only the last 4 digits are stored.
-      idProofNumber:
-        data.idProofType === "AADHAAR"
-          ? data.idProofNumber.slice(-4)
-          : data.idProofNumber,
-      addressLine1: data.addressLine1,
-      addressLine2: data.addressLine2 || null,
-      city: data.city,
-      state: data.state,
-      postalCode: data.postalCode,
-      country: data.country,
-      status: "PENDING",
-    },
-  });
+  try {
+    const profile = await prisma.sellerProfile.create({
+      data: {
+        userId,
+        shopName: data.shopName,
+        description: data.description,
+        gstNumber: data.gstNumber || null,
+        idProofType: data.idProofType,
+        // Aadhaar: only the last 4 digits are stored.
+        idProofNumber:
+          data.idProofType === "AADHAAR"
+            ? data.idProofNumber.slice(-4)
+            : data.idProofNumber,
+        addressLine1: data.addressLine1,
+        addressLine2: data.addressLine2 || null,
+        city: data.city,
+        state: data.state,
+        postalCode: data.postalCode,
+        country: data.country,
+        status: "PENDING",
+      },
+    });
+
+    // Same masking as GET /sellers/me, so the full ID number is never returned.
+    return { ...profile, idProofNumber: maskIdNumber(profile.idProofNumber) };
+  } catch (err) {
+    // Two requests at the same time (e.g. double click): the unique userId
+    // constraint rejects the second one. Return 409 instead of 500.
+    if (err.code === "P2002") {
+      throw ApiError.conflict("Seller profile already exists");
+    }
+    throw err;
+  }
 }
 
 // Seller views own profile
