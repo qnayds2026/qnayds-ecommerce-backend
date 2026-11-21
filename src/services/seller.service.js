@@ -1,6 +1,11 @@
-
 const { prisma } = require("../config/db");
 const ApiError = require("../utils/ApiError");
+
+// Shows only the last 4 characters, e.g. XXXXXX234F.
+function maskIdNumber(value) {
+  if (!value) return value;
+  return "X".repeat(Math.max(value.length - 4, 0)) + value.slice(-4);
+}
 
 // Seller registration
 async function createSellerProfile(userId, data) {
@@ -17,6 +22,19 @@ async function createSellerProfile(userId, data) {
       userId,
       shopName: data.shopName,
       description: data.description,
+      gstNumber: data.gstNumber || null,
+      idProofType: data.idProofType,
+      // Aadhaar: only the last 4 digits are stored.
+      idProofNumber:
+        data.idProofType === "AADHAAR"
+          ? data.idProofNumber.slice(-4)
+          : data.idProofNumber,
+      addressLine1: data.addressLine1,
+      addressLine2: data.addressLine2 || null,
+      city: data.city,
+      state: data.state,
+      postalCode: data.postalCode,
+      country: data.country,
       status: "PENDING",
     },
   });
@@ -32,7 +50,7 @@ async function getMySellerProfile(userId) {
     throw ApiError.notFound("Seller profile not found");
   }
 
-  return profile;
+  return { ...profile, idProofNumber: maskIdNumber(profile.idProofNumber) };
 }
 
 // Admin: list, search, filter and paginate sellers
@@ -156,6 +174,15 @@ async function getSellerProfileById(id) {
       shopName: true,
       description: true,
       status: true,
+      gstNumber: true,
+      idProofType: true,
+      idProofNumber: true,
+      addressLine1: true,
+      addressLine2: true,
+      city: true,
+      state: true,
+      postalCode: true,
+      country: true,
       createdAt: true,
       updatedAt: true,
       user: {
