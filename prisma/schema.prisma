@@ -24,6 +24,14 @@ enum SellerStatus {
   SUSPENDED
 }
 
+enum IdProofType {
+  PAN
+  AADHAAR
+  VOTER_ID
+  DRIVING_LICENCE
+  PASSPORT
+}
+
 enum ProductStatus {
   DRAFT
   ACTIVE
@@ -105,6 +113,15 @@ model SellerProfile {
   userId      String       @unique
   shopName    String       @unique
   description String?
+  gstNumber     String?
+  idProofType   IdProofType?
+  idProofNumber String?
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  state         String?
+  postalCode    String?
+  country       String?      @default("India")
   status      SellerStatus @default(PENDING)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -575,6 +592,10 @@ enum ReturnReason {
   CHANGED_MIND
   OTHER
 }
+enum RefundMethod {
+  UPI
+  BANK
+}
 
 // One return request belongs to one seller order. Items can be partial.
 model ReturnRequest {
@@ -594,6 +615,13 @@ model ReturnRequest {
   paymentId            String?
   paymentRefundId      String? @unique
   refundIdempotencyKey String? @unique
+
+  refundMethod          RefundMethod?
+  refundUpiId           String?
+  refundAccountName     String?
+  refundAccountNumber   String?
+  refundIfsc            String?
+  manualRefundReference String?
 
   carrierName    String?
   trackingNumber String?

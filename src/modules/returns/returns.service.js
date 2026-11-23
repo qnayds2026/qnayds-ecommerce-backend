@@ -20,6 +20,24 @@ function generateReturnNumber() {
   return `RET-${time}-${rand}`;
 }
 
+// Only the fields of the chosen refund method are saved.
+function buildRefundFields(body) {
+  if (body.refundMethod === "UPI") {
+    return { refundMethod: "UPI", refundUpiId: body.refundUpiId };
+  }
+
+  if (body.refundMethod === "BANK") {
+    return {
+      refundMethod: "BANK",
+      refundAccountName: body.refundAccountName,
+      refundAccountNumber: body.refundAccountNumber,
+      refundIfsc: body.refundIfsc,
+    };
+  }
+
+  return {};
+}
+
 // No deliveredAt column yet, so we read the DELIVERED entry from the status history.
 async function getDeliveredAt(tx, sellerOrder) {
   const entry = await tx.orderStatusHistory.findFirst({
@@ -94,13 +112,24 @@ async function createReturn(user, body) {
 
         // 5. The order must have a completed payment to refund against.
         const payment = await tx.payment.findFirst({
-          where: { orderId: order.id, status: "CAPTURED" },
-          orderBy: { capturedAt: "desc" },
+          where: {
+            orderId: order.id,
+            OR: [{ status: "CAPTURED" }, { method: "COD" }],
+          },
+          orderBy: { createdAt: "desc" },
         });
 
         if (!payment) {
           throw ApiError.conflict(
             "No completed payment found for this order"
+          );
+        }
+                // COD cannot be refunded through Razorpay, so we need the customer's payout details.
+        const isCod = payment.method === "COD";
+
+        if (isCod && !body.refundMethod) {
+          throw ApiError.badRequest(
+            "Please add your UPI ID or bank details to receive the COD refund"
           );
         }
 
@@ -154,6 +183,7 @@ async function createReturn(user, body) {
             refundAmount,
             currency: order.currency,
             paymentId: payment.id,
+            ...(isCod ? buildRefundFields(body) : {}),
             items: { create: itemRows },
             history: {
               create: {

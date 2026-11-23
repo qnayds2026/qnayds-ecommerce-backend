@@ -1,10 +1,14 @@
 const returnsService = require("./returns.service");
 const refundService = require("./returns.refund.service");
+const { presentReturn } = require("./returns.serializer");
+
+// Payout details are hidden or masked depending on who is asking.
+const present = (req, data) => presentReturn(data, req.user.role);
 
 const createReturn = async (req, res, next) => {
   try {
     const data = await returnsService.createReturn(req.user, req.validated.body);
-    res.status(201).json({ success: true, data });
+    res.status(201).json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -13,7 +17,7 @@ const createReturn = async (req, res, next) => {
 const listMyReturns = async (req, res, next) => {
   try {
     const data = await returnsService.listMyReturns(req.user, req.validated.query);
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -22,7 +26,7 @@ const listMyReturns = async (req, res, next) => {
 const getMyReturn = async (req, res, next) => {
   try {
     const data = await returnsService.getMyReturn(req.user, req.validated.params.returnId);
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -35,7 +39,7 @@ const cancelReturn = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.note
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -48,7 +52,7 @@ const escalateReturn = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.reason
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -57,7 +61,7 @@ const escalateReturn = async (req, res, next) => {
 const listSellerReturns = async (req, res, next) => {
   try {
     const data = await returnsService.listSellerReturns(req.user, req.validated.query);
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -66,7 +70,7 @@ const listSellerReturns = async (req, res, next) => {
 const listAdminReturns = async (req, res, next) => {
   try {
     const data = await returnsService.listAdminReturns(req.validated.query);
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -80,7 +84,7 @@ const approveReturn = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.note
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -93,7 +97,7 @@ const rejectReturn = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.note
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -106,11 +110,38 @@ const refundReturn = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.note
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
 };
+
+const confirmCodRefund = async (req, res, next) => {
+  try {
+    const data = await refundService.confirmCodRefund(
+      req.user,
+      req.validated.params.returnId,
+      req.validated.body
+    );
+    res.json({ success: true, data: present(req, data) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const failCodRefund = async (req, res, next) => {
+  try {
+    const data = await refundService.failCodRefund(
+      req.user,
+      req.validated.params.returnId,
+      req.validated.body
+    );
+    res.json({ success: true, data: present(req, data) });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const addShipment = async (req, res, next) => {
   try {
     const data = await returnsService.addShipment(
@@ -118,7 +149,7 @@ const addShipment = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -132,7 +163,7 @@ const markReceived = async (req, res, next) => {
       req.validated.params.returnId,
       req.validated.body.note
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data: present(req, data) });
   } catch (err) {
     next(err);
   }
@@ -150,5 +181,7 @@ module.exports = {
   rejectReturn,
   markReceived,
   refundReturn,
+  confirmCodRefund,
+  failCodRefund,
   escalateReturn,
 };

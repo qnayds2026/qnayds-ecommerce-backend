@@ -5,8 +5,10 @@ const ApiError = require("../../utils/ApiError");
 const razorpay = require("../payments/razorpay.service");
 const { assertTransition } = require("./return-state");
 const {
+  createNotification,
   createManyNotifications,
 } = require("../notifications/notifications.service");
+
 const returnInclude = {
   items: true,
   history: { orderBy: { createdAt: "asc" } },
@@ -85,7 +87,17 @@ async function markRefundFailed(returnId, message) {
     );
   }
 }
+
 async function refundReturn(user, returnId, note) {
+  // COD returns are refunded by hand, so they never touch Razorpay.
+  const found = await prisma.returnRequest.findUnique({
+    where: { id: returnId },
+    select: { payment: { select: { method: true } } },
+  });
+  if (found && found.payment && found.payment.method === "COD") {
+    return initiateCodRefund(user, returnId, note);
+  }
+
   // Fail before anything is changed if Razorpay is not configured.
   razorpay.assertConfigured();
 
@@ -222,4 +234,176 @@ async function refundReturn(user, returnId, note) {
   return prisma.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
 }
 
-module.exports = { refundReturn };
+// COD: no gateway call. The admin pays the customer manually (UPI or bank).
+async function initiateCodRefund(user, returnId, note) {
+  return prisma.$transaction(async (tx) => {
+    const ret = await tx.returnRequest.findUnique({
+      where: { id: returnId },
+      include: { payment: true },
+    });
+    if (!ret) throw ApiError.notFound("Return not found");
+
+    // A second call just returns the current record.
+    if (ALREADY_STARTED.includes(ret.status)) {
+      return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+    }
+
+    // 409 if the move is not allowed from this status.
+    assertTransition(ret.status, "REFUND_INITIATED", "ADMIN");
+
+    if (!ret.payment || ret.payment.method !== "COD") {
+      throw ApiError.conflict("This is not a COD order");
+    }
+
+    const hasUpi = ret.refundMethod === "UPI" && ret.refundUpiId;
+    const hasBank =
+      ret.refundMethod === "BANK" &&
+      ret.refundAccountName &&
+      ret.refundAccountNumber &&
+      ret.refundIfsc;
+
+    if (!hasUpi && !hasBank) {
+      throw ApiError.conflict("The customer has not given complete UPI or bank details");
+    }
+
+    const claimed = await tx.returnRequest.updateMany({
+      where: { id: ret.id, status: ret.status },
+      data: {
+        status: "REFUND_INITIATED",
+        ...(note ? { adminNote: note } : {}),
+      },
+    });
+    if (claimed.count === 0) {
+      throw ApiError.conflict("Return status changed, please refresh and try again");
+    }
+
+    await tx.returnStatusHistory.create({
+      data: {
+        returnId: ret.id,
+        oldStatus: ret.status,
+        newStatus: "REFUND_INITIATED",
+        changedBy: user.id,
+        actorRole: "ADMIN",
+        note: `Manual COD refund pending${note ? `: ${note}` : ""}`,
+      },
+    });
+
+    return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+  });
+}
+
+// COD: the admin has paid the customer by UPI/bank and enters the UTR number.
+async function confirmCodRefund(user, returnId, body) {
+  const updated = await prisma.$transaction(async (tx) => {
+    const ret = await tx.returnRequest.findUnique({
+      where: { id: returnId },
+      include: { payment: true },
+    });
+    if (!ret) throw ApiError.notFound("Return not found");
+
+    // A second click just returns the current record.
+    if (ret.status === "REFUNDED" || ret.status === "CLOSED") {
+      return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+    }
+
+    // 409 if the move is not allowed from this status.
+    assertTransition(ret.status, "REFUNDED", "ADMIN");
+
+    if (!ret.payment || ret.payment.method !== "COD") {
+      throw ApiError.conflict("Only COD returns are confirmed manually");
+    }
+
+    // Only one caller can win this update.
+    const claimed = await tx.returnRequest.updateMany({
+      where: { id: ret.id, status: "REFUND_INITIATED" },
+      data: {
+        status: "REFUNDED",
+        refundedAt: new Date(),
+        manualRefundReference: body.utr,
+        ...(body.note ? { adminNote: body.note } : {}),
+      },
+    });
+    if (claimed.count === 0) {
+      throw ApiError.conflict("Return status changed, please refresh and try again");
+    }
+
+    await tx.returnStatusHistory.create({
+      data: {
+        returnId: ret.id,
+        oldStatus: "REFUND_INITIATED",
+        newStatus: "REFUNDED",
+        changedBy: user.id,
+        actorRole: "ADMIN",
+        note: `Manual COD refund paid, UTR: ${body.utr}${body.note ? `. ${body.note}` : ""}`,
+      },
+    });
+
+    return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+  });
+
+  // Notify the customer only after the transaction commits.
+  // The dedupeKey makes a repeated call harmless.
+  if (updated && updated.status === "REFUNDED") {
+    try {
+      await createNotification({
+        userId: updated.userId,
+        type: "REFUND_COMPLETED",
+        title: "Refund Completed",
+        message: `Your refund for return ${updated.returnNumber} has been paid. UTR: ${updated.manualRefundReference}.`,
+        link: `/returns/${updated.id}`,
+        dedupeKey: `return:${updated.id}:refunded:${updated.userId}`,
+      });
+    } catch (error) {
+      console.error("Refund completed notification failed:", error.message);
+    }
+  }
+
+  return updated;
+}
+
+// COD: the manual transfer failed (wrong UPI id, closed account, ...). The admin can retry later.
+async function failCodRefund(user, returnId, body) {
+  return prisma.$transaction(async (tx) => {
+    const ret = await tx.returnRequest.findUnique({
+      where: { id: returnId },
+      include: { payment: true },
+    });
+    if (!ret) throw ApiError.notFound("Return not found");
+
+    // A second click just returns the current record.
+    if (ret.status === "REFUND_FAILED") {
+      return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+    }
+
+    // 409 if the move is not allowed from this status.
+    assertTransition(ret.status, "REFUND_FAILED", "ADMIN");
+
+    if (!ret.payment || ret.payment.method !== "COD") {
+      throw ApiError.conflict("Only COD returns are marked failed by hand");
+    }
+
+    // Only one caller can win this update.
+    const claimed = await tx.returnRequest.updateMany({
+      where: { id: ret.id, status: "REFUND_INITIATED" },
+      data: { status: "REFUND_FAILED", adminNote: body.note },
+    });
+    if (claimed.count === 0) {
+      throw ApiError.conflict("Return status changed, please refresh and try again");
+    }
+
+    await tx.returnStatusHistory.create({
+      data: {
+        returnId: ret.id,
+        oldStatus: "REFUND_INITIATED",
+        newStatus: "REFUND_FAILED",
+        changedBy: user.id,
+        actorRole: "ADMIN",
+        note: `Manual COD refund failed: ${body.note}`,
+      },
+    });
+
+    return tx.returnRequest.findUnique({ where: { id: ret.id }, include: returnInclude });
+  });
+}
+
+module.exports = { refundReturn, initiateCodRefund, confirmCodRefund, failCodRefund };

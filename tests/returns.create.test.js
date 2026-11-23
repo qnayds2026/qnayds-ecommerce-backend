@@ -1,6 +1,7 @@
 jest.mock("../src/config/db", () => ({
   prisma: {
     order: { findFirst: jest.fn() },
+    sellerProfile: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(),
   },
 }));
@@ -228,6 +229,48 @@ describe("returns.service createReturn", () => {
       );
 
       expect(result.refundAmount.toNumber()).toBe(500);
+    });
+  });
+  
+  describe("COD refund details", () => {
+    const codPayment = { id: "pay_cod", status: "PENDING", method: "COD" };
+
+    test("COD order without refund details is rejected (400)", async () => {
+      tx.payment.findFirst.mockResolvedValue(codPayment);
+
+      await expect(returnsService.createReturn(user, body())).rejects.toMatchObject({
+        statusCode: 400,
+      });
+      expect(tx.returnRequest.create).not.toHaveBeenCalled();
+    });
+
+    test("COD order with UPI saves only the UPI field", async () => {
+      tx.payment.findFirst.mockResolvedValue(codPayment);
+
+      await returnsService.createReturn(
+        user,
+        body({
+          refundMethod: "UPI",
+          refundUpiId: "henna@okaxis",
+          refundAccountNumber: "123456789012",
+        })
+      );
+
+      const data = tx.returnRequest.create.mock.calls[0][0].data;
+      expect(data.refundMethod).toBe("UPI");
+      expect(data.refundUpiId).toBe("henna@okaxis");
+      expect(data.refundAccountNumber).toBeUndefined();
+    });
+
+    test("ONLINE order ignores refund details", async () => {
+      await returnsService.createReturn(
+        user,
+        body({ refundMethod: "UPI", refundUpiId: "henna@okaxis" })
+      );
+
+      const data = tx.returnRequest.create.mock.calls[0][0].data;
+      expect(data.refundMethod).toBeUndefined();
+      expect(data.refundUpiId).toBeUndefined();
     });
   });
 });

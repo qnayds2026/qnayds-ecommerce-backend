@@ -45,8 +45,11 @@ describe("return-state", () => {
     expect(err.statusCode).toBe(403);
   });
 
-  test("only the system can mark a return REFUNDED, an admin cannot (403)", () => {
-    const err = errorOf(() => assertTransition("REFUND_INITIATED", "REFUNDED", "ADMIN"));
+    test("system and admin can mark a return REFUNDED, a customer cannot (403)", () => {
+    expect(() => assertTransition("REFUND_INITIATED", "REFUNDED", "SYSTEM")).not.toThrow();
+    expect(() => assertTransition("REFUND_INITIATED", "REFUNDED", "ADMIN")).not.toThrow();
+
+    const err = errorOf(() => assertTransition("REFUND_INITIATED", "REFUNDED", "CUSTOMER"));
     expect(err.statusCode).toBe(403);
   });
 

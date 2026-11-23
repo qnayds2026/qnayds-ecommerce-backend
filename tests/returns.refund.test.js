@@ -549,3 +549,231 @@ describe("webhooks.hooks onRefundEvent", () => {
     expect(tx.returnStatusHistory.create).not.toHaveBeenCalled();
   });
 });
+
+describe("returns.refund.service COD refund", () => {
+  let tx;
+
+  const codPayment = makePayment({ method: "COD", gatewayPaymentId: null, status: "PENDING" });
+  const makeCodReturn = (overrides = {}) =>
+    makeReturn({
+      payment: codPayment,
+      userId: "user_cust",
+      refundMethod: "UPI",
+      refundUpiId: "henna@okaxis",
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    razorpay.assertConfigured.mockReset();
+    razorpay.createGatewayRefund.mockReset();
+    razorpay.findGatewayRefundForReturn.mockReset();
+    prisma.notification.upsert.mockResolvedValue({ id: "notification_1" });
+
+    tx = {
+      returnRequest: {
+        findUnique: jest.fn().mockResolvedValue(makeCodReturn()),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      returnStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementation(async (fn) => fn(tx));
+
+    // refundReturn first looks up the payment method outside the transaction.
+    prisma.returnRequest.findUnique.mockResolvedValue({ payment: { method: "COD" } });
+  });
+
+  describe("initiate", () => {
+    test("COD return goes to REFUND_INITIATED without touching Razorpay", async () => {
+      await refundService.refundReturn(admin, "ret_1", "Item checked");
+
+      expect(razorpay.assertConfigured).not.toHaveBeenCalled();
+      expect(razorpay.findGatewayRefundForReturn).not.toHaveBeenCalled();
+      expect(razorpay.createGatewayRefund).not.toHaveBeenCalled();
+
+      const claim = tx.returnRequest.updateMany.mock.calls[0][0];
+      expect(claim.where).toEqual({ id: "ret_1", status: "ITEM_RECEIVED" });
+      expect(claim.data.status).toBe("REFUND_INITIATED");
+      expect(claim.data.adminNote).toBe("Item checked");
+
+      expect(tx.returnStatusHistory.create.mock.calls[0][0].data).toMatchObject({
+        oldStatus: "ITEM_RECEIVED",
+        newStatus: "REFUND_INITIATED",
+        changedBy: "user_admin",
+        actorRole: "ADMIN",
+        note: expect.stringContaining("Manual COD refund pending"),
+      });
+    });
+
+    test.each([
+      ["no refund method", { refundMethod: null, refundUpiId: null }],
+      ["UPI without an id", { refundMethod: "UPI", refundUpiId: null }],
+      [
+        "bank details without IFSC",
+        {
+          refundMethod: "BANK",
+          refundUpiId: null,
+          refundAccountName: "Henna",
+          refundAccountNumber: "123456789012",
+          refundIfsc: null,
+        },
+      ],
+    ])("incomplete payout details (%s): rejected (409), nothing changes", async (_label, fields) => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn(fields));
+
+      await expect(refundService.initiateCodRefund(admin, "ret_1")).rejects.toMatchObject({
+        statusCode: 409,
+      });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+      expect(tx.returnStatusHistory.create).not.toHaveBeenCalled();
+    });
+
+    test("return that is not ITEM_RECEIVED yet cannot be refunded (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "APPROVED" }));
+
+      await expect(refundService.initiateCodRefund(admin, "ret_1")).rejects.toMatchObject({
+        statusCode: 409,
+      });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("an online-paid return is rejected by the COD flow (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeReturn());
+
+      await expect(refundService.initiateCodRefund(admin, "ret_1")).rejects.toMatchObject({
+        statusCode: 409,
+      });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("confirm", () => {
+    test("UTR is saved and the return becomes REFUNDED", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "REFUND_INITIATED" }));
+
+      await refundService.confirmCodRefund(admin, "ret_1", { utr: "412345678901", note: "Paid" });
+
+      const claim = tx.returnRequest.updateMany.mock.calls[0][0];
+      expect(claim.where).toEqual({ id: "ret_1", status: "REFUND_INITIATED" });
+      expect(claim.data.status).toBe("REFUNDED");
+      expect(claim.data.manualRefundReference).toBe("412345678901");
+      expect(claim.data.refundedAt).toBeInstanceOf(Date);
+
+      expect(tx.returnStatusHistory.create.mock.calls[0][0].data).toMatchObject({
+        oldStatus: "REFUND_INITIATED",
+        newStatus: "REFUNDED",
+        changedBy: "user_admin",
+        actorRole: "ADMIN",
+        note: expect.stringContaining("412345678901"),
+      });
+    });
+
+    test("cannot be confirmed before the refund was initiated (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "ITEM_RECEIVED" }));
+
+      await expect(
+        refundService.confirmCodRefund(admin, "ret_1", { utr: "412345678901" })
+      ).rejects.toMatchObject({ statusCode: 409 });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("an online-paid return cannot be confirmed by hand (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeReturn({ status: "REFUND_INITIATED" }));
+
+      await expect(
+        refundService.confirmCodRefund(admin, "ret_1", { utr: "412345678901" })
+      ).rejects.toMatchObject({ statusCode: 409 });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("a second confirm on a REFUNDED return returns the record, no new audit row", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "REFUNDED" }));
+
+      const result = await refundService.confirmCodRefund(admin, "ret_1", { utr: "412345678901" });
+
+      expect(result.id).toBe("ret_1");
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+      expect(tx.returnStatusHistory.create).not.toHaveBeenCalled();
+    });
+
+    test("the customer is notified after the UTR is saved", async () => {
+      tx.returnRequest.findUnique
+        .mockResolvedValueOnce(makeCodReturn({ status: "REFUND_INITIATED" }))
+        .mockResolvedValueOnce(
+          makeCodReturn({ status: "REFUNDED", manualRefundReference: "412345678901" })
+        );
+
+      await refundService.confirmCodRefund(admin, "ret_1", { utr: "412345678901" });
+
+      expect(prisma.notification.upsert).toHaveBeenCalledTimes(1);
+      expect(prisma.notification.upsert.mock.calls[0][0].create).toMatchObject({
+        userId: "user_cust",
+        type: "REFUND_COMPLETED",
+        link: "/returns/ret_1",
+      });
+    });
+  });
+
+  describe("fail and retry", () => {
+    test("a failed manual transfer becomes REFUND_FAILED and the reason is saved", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "REFUND_INITIATED" }));
+
+      await refundService.failCodRefund(admin, "ret_1", { note: "Wrong UPI id" });
+
+      const claim = tx.returnRequest.updateMany.mock.calls[0][0];
+      expect(claim.where).toEqual({ id: "ret_1", status: "REFUND_INITIATED" });
+      expect(claim.data.status).toBe("REFUND_FAILED");
+      expect(claim.data.adminNote).toBe("Wrong UPI id");
+
+      expect(tx.returnStatusHistory.create.mock.calls[0][0].data).toMatchObject({
+        oldStatus: "REFUND_INITIATED",
+        newStatus: "REFUND_FAILED",
+        changedBy: "user_admin",
+        actorRole: "ADMIN",
+        note: expect.stringContaining("Wrong UPI id"),
+      });
+    });
+
+    test("cannot be marked failed before the refund was initiated (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "ITEM_RECEIVED" }));
+
+      await expect(
+        refundService.failCodRefund(admin, "ret_1", { note: "Wrong UPI id" })
+      ).rejects.toMatchObject({ statusCode: 409 });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("an online-paid return cannot be marked failed by hand (409)", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeReturn({ status: "REFUND_INITIATED" }));
+
+      await expect(
+        refundService.failCodRefund(admin, "ret_1", { note: "Wrong UPI id" })
+      ).rejects.toMatchObject({ statusCode: 409 });
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("a second fail on a REFUND_FAILED return returns the record, no new audit row", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "REFUND_FAILED" }));
+
+      const result = await refundService.failCodRefund(admin, "ret_1", { note: "Wrong UPI id" });
+
+      expect(result.id).toBe("ret_1");
+      expect(tx.returnRequest.updateMany).not.toHaveBeenCalled();
+      expect(tx.returnStatusHistory.create).not.toHaveBeenCalled();
+    });
+
+    test("a REFUND_FAILED COD return can be retried by the admin", async () => {
+      tx.returnRequest.findUnique.mockResolvedValue(makeCodReturn({ status: "REFUND_FAILED" }));
+
+      await refundService.refundReturn(admin, "ret_1");
+
+      expect(razorpay.createGatewayRefund).not.toHaveBeenCalled();
+      expect(tx.returnRequest.updateMany.mock.calls[0][0].where).toEqual({
+        id: "ret_1",
+        status: "REFUND_FAILED",
+      });
+      expect(tx.returnRequest.updateMany.mock.calls[0][0].data.status).toBe("REFUND_INITIATED");
+    });
+  });
+});
