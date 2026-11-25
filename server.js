@@ -28,7 +28,6 @@ const returnsRoutes = require("./src/modules/returns/returns.routes");
 const sellerReturnsRoutes = require("./src/modules/returns/returns.seller.routes");
 const adminReturnsRoutes = require("./src/modules/returns/returns.admin.routes");
 const paymentRoutes = require("./src/modules/payments/payments.routes");
-
 const notificationRoutes = require(
   "./src/modules/notifications/notifications.routes"
 );
@@ -36,6 +35,7 @@ const notificationRoutes = require(
 const shippingRoutes = require(
   "./src/modules/shipping/shipping.routes"
 );
+const reviewRoutes = require("./src/modules/reviews/reviews.routes");
 
 const {
   startReturnEscalationJob,
@@ -93,6 +93,7 @@ app.use("/api/v1/wishlist", wishlistRoutes);
 app.use("/api/v1/addresses", addressRoutes);
 app.use("/api/v1", shippingRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1", reviewRoutes);
 
 // Error handlers
 app.use(notFoundHandler);

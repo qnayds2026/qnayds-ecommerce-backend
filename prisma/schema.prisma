@@ -95,6 +95,7 @@ model User {
   payments                 Payment[]
   returnRequests           ReturnRequest[]
   notifications            Notification[]
+  reviews                  Review[]
 
   @@map("users")
 }
@@ -182,6 +183,7 @@ model Product {
   images        ProductImage[]
   wishlistItems WishlistItem[]
   statusHistory ProductStatusHistory[]
+  reviews       Review[]
 
   @@index([sellerId, status])
   @@index([categoryId, status])
@@ -284,6 +286,7 @@ model Order {
   orderStatusHistories OrderStatusHistory[]
   payments             Payment[]
   returnRequests       ReturnRequest[]
+  reviews              Review[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -669,6 +672,29 @@ model ShipmentEvent {
   @@index([shipmentId, createdAt])
   @@index([status])
   @@map("shipment_events")
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  orderId   String
+  rating    Int
+  title     String?
+  body      String?
+  isVisible Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  // One review per customer per product per order
+  @@unique([userId, productId, orderId])
+  @@index([productId, isVisible])
+  @@index([userId])
+  @@map("reviews")
 }
 
 model Notification {
