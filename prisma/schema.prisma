@@ -9,6 +9,7 @@ datasource db {
 enum UserRole {
   CUSTOMER
   SELLER
+  RESELLER
   ADMIN
 }
 
@@ -92,6 +93,7 @@ model User {
   updatedAt    DateTime   @updatedAt
 
   sellerProfile            SellerProfile?
+  resellerProfile          ResellerProfile?
   sellerStatusActions      SellerStatusHistory[]   @relation("SellerStatusHistoryAdmin")
   productModerationActions ProductStatusHistory[]  @relation("ProductStatusHistoryAdmin")
   customerStatusHistory    CustomerStatusHistory[] @relation("CustomerStatusHistoryCustomer")
@@ -149,6 +151,7 @@ model OrderItem {
   unitPrice         Decimal @db.Decimal(12, 2)
   quantity          Int
   subtotal          Decimal @db.Decimal(12, 2)
+  resellerMargin Decimal? @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
 
@@ -156,6 +159,7 @@ model OrderItem {
   sellerOrder SellerOrder    @relation(fields: [sellerOrderId], references: [id], onDelete: Restrict)
   variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
   returnItems ReturnItem[]
+  resellerEarning ResellerEarning?
 
   @@index([orderId])
   @@index([sellerOrderId])
@@ -192,6 +196,7 @@ model Product {
   description String?
   brand       String?
   status      ProductStatus @default(DRAFT)
+  isResellable Boolean       @default(false)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -199,6 +204,7 @@ model Product {
   category      Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   variants      ProductVariant[]
   images        ProductImage[]
+  resellerShares ResellerProductShare[]
   wishlistItems WishlistItem[]
   statusHistory ProductStatusHistory[]
   reviews       Review[]
@@ -284,6 +290,11 @@ model Order {
   totalAmount Decimal @db.Decimal(12, 2)
   currency    String  @default("INR")
 
+  shippingCharge      Decimal @default(0) @db.Decimal(12, 2)
+  resellerMarginTotal Decimal? @db.Decimal(12, 2)
+  resellerId          String?
+  resellerShareId     String?
+
   // Delivery address snapshot
   deliveryName         String
   deliveryPhone        String
@@ -303,12 +314,16 @@ model Order {
   orderItems           OrderItem[]
   orderStatusHistories OrderStatusHistory[]
   payments             Payment[]
+  reseller         ResellerProfile?      @relation(fields: [resellerId], references: [id], onDelete: Restrict)
+  resellerShare    ResellerProductShare? @relation(fields: [resellerShareId], references: [id], onDelete: Restrict)
+  resellerEarnings ResellerEarning[]
   returnRequests       ReturnRequest[]
   reviews              Review[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@index([status])
+  @@index([resellerId, createdAt])
   @@map("orders")
 }
 
@@ -749,4 +764,177 @@ model Notification {
   @@index([userId, isRead])
   @@index([userId, createdAt])
   @@map("notifications")
+}
+
+// ===== Reselling =====
+
+enum ResellerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum BankVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ResellerEarningStatus {
+  PENDING
+  ELIGIBLE
+  IN_SETTLEMENT
+  SETTLED
+  CANCELLED
+}
+
+enum ResellerEarningEventType {
+  ACCRUED
+  ELIGIBLE
+  ADJUSTED
+  CANCELLED
+  SETTLED
+}
+
+enum ResellerSettlementStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model ResellerProfile {
+  id          String         @id @default(cuid())
+  userId      String         @unique
+  displayName String
+  phone       String?
+  status      ResellerStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  bankAccounts ResellerBankAccount[]
+  shares       ResellerProductShare[]
+  orders       Order[]
+  earnings     ResellerEarning[]
+  settlements  ResellerSettlement[]
+
+  @@index([status])
+  @@map("reseller_profiles")
+}
+
+// Sensitive: never select accountNumberEncrypted in ordinary profile APIs.
+model ResellerBankAccount {
+  id                     String                 @id @default(cuid())
+  resellerId             String
+  accountHolderName      String
+  accountNumberEncrypted String
+  accountLast4           String
+  ifsc                   String
+  bankName               String?
+  verificationStatus     BankVerificationStatus @default(PENDING)
+  verifiedAt             DateTime?
+  verifiedById           String?
+  rejectionReason        String?
+  isPrimary              Boolean                @default(false)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+
+  reseller    ResellerProfile      @relation(fields: [resellerId], references: [id], onDelete: Restrict)
+  settlements ResellerSettlement[]
+
+  @@index([resellerId])
+  @@map("reseller_bank_accounts")
+}
+
+model ResellerProductShare {
+  id         String   @id @default(cuid())
+  resellerId String
+  productId  String
+  code       String   @unique
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  reseller ResellerProfile @relation(fields: [resellerId], references: [id], onDelete: Restrict)
+  product  Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  orders   Order[]
+
+  @@unique([resellerId, productId])
+  @@index([productId])
+  @@map("reseller_product_shares")
+}
+
+// One earning row per order item (supports partial returns).
+model ResellerEarning {
+  id           String                @id @default(cuid())
+  resellerId   String
+  orderId      String
+  orderItemId  String                @unique
+  quantity     Int
+  amount       Decimal               @db.Decimal(12, 2)
+  status       ResellerEarningStatus @default(PENDING)
+  eligibleAt   DateTime?
+  settlementId String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  reseller   ResellerProfile       @relation(fields: [resellerId], references: [id], onDelete: Restrict)
+  order      Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem  OrderItem             @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  settlement ResellerSettlement?   @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  events     ResellerEarningEvent[]
+
+  @@index([resellerId, status])
+  @@index([orderId])
+  @@index([settlementId])
+  @@map("reseller_earnings")
+}
+
+// Ledger: financial history is never deleted, only appended.
+model ResellerEarningEvent {
+  id          String                   @id @default(cuid())
+  earningId   String
+  type        ResellerEarningEventType
+  amountDelta Decimal                  @db.Decimal(12, 2)
+  reason      String?
+  actorId     String?
+  createdAt   DateTime                 @default(now())
+
+  earning ResellerEarning @relation(fields: [earningId], references: [id], onDelete: Restrict)
+
+  @@index([earningId, createdAt])
+  @@map("reseller_earning_events")
+}
+
+model ResellerSettlement {
+  id               String                   @id @default(cuid())
+  resellerId       String
+  bankAccountId    String
+  totalAmount      Decimal                  @db.Decimal(12, 2)
+  currency         String                   @default("INR") @db.Char(3)
+  status           ResellerSettlementStatus @default(REQUESTED)
+  requestedAt      DateTime                 @default(now())
+  approvedAt       DateTime?
+  approvedById     String?
+  rejectionReason  String?
+  method           String?
+  paymentReference String?                  @unique
+  idempotencyKey   String?                  @unique
+  failureReason    String?
+  processedAt      DateTime?
+  processedById    String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  reseller    ResellerProfile     @relation(fields: [resellerId], references: [id], onDelete: Restrict)
+  bankAccount ResellerBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  earnings    ResellerEarning[]
+
+  @@index([resellerId, status])
+  @@index([bankAccountId])
+  @@map("reseller_settlements")
 }
