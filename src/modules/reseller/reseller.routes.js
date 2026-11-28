@@ -31,4 +31,29 @@ router.patch(
   controller.updateProfile
 );
 
+// The service also requires an APPROVED reseller profile for the routes below.
+router.get(
+  "/products",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ query: validation.listProductsQuery }),
+  controller.listProducts
+);
+
+router.post(
+  "/shares",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ body: validation.createShareBody }),
+  controller.createShare
+);
+
+router.get(
+  "/shares",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ query: validation.listSharesQuery }),
+  controller.listShares
+);
+
 module.exports = router;

@@ -26,4 +26,30 @@ const updateProfileBody = z
     message: "Provide at least one field to update",
   });
 
-module.exports = { createProfileBody, updateProfileBody };
+const pagination = {
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+};
+
+const listProductsQuery = z.object({
+  ...pagination,
+  search: z.string().trim().min(1).max(100).optional(),
+});
+
+const listSharesQuery = z.object({ ...pagination });
+
+const createShareBody = z.strictObject({
+  productId: z
+    .string()
+    .trim()
+    .min(1, { message: "Product id is required" })
+    .max(64, { message: "Invalid product id" }),
+});
+
+module.exports = {
+  createProfileBody,
+  updateProfileBody,
+  listProductsQuery,
+  listSharesQuery,
+  createShareBody,
+};
