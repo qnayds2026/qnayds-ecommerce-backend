@@ -24,37 +24,56 @@ function generateOrderNumber() {
   return `ORD-${time}-${rand}`;
 }
 
-// The reseller places the order for an end customer. Prices, shipping and
-// stock come from the database and server config. The client only sends the
-// variants, quantities, its own margin per unit and the customer's address.
+// Reseller places an order for an end customer.
+// Prices, shipping and stock come from database/server config.
 async function createResellerOrder(user, body, idempotencyKey) {
   if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
     throw ApiError.badRequest("Idempotency-Key header is required");
   }
+
   const key = idempotencyKey.trim();
+
   if (key.length > 100) {
-    throw ApiError.badRequest("Idempotency-Key must not exceed 100 characters");
+    throw ApiError.badRequest(
+      "Idempotency-Key must not exceed 100 characters"
+    );
   }
 
   const reseller = await getApprovedReseller(user);
 
   const existing = await prisma.order.findFirst({
-    where: { userId: user.id, idempotencyKey: key },
+    where: {
+      userId: user.id,
+      idempotencyKey: key,
+    },
     include: orderInclude,
   });
+
   if (existing) return existing;
 
-  // A share code can only be used by the reseller who owns it.
+  // Validate reseller share code.
   let shareId = null;
+  let shareProductId = null;
+
   if (body.shareCode) {
     const share = await prisma.resellerProductShare.findFirst({
-      where: { code: body.shareCode, resellerId: reseller.id, isActive: true },
-      select: { id: true },
+      where: {
+        code: body.shareCode,
+        resellerId: reseller.id,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        productId: true,
+      },
     });
+
     if (!share) {
       throw ApiError.badRequest("Invalid share code");
     }
+
     shareId = share.id;
+    shareProductId = share.productId;
   }
 
   const shippingCharge = getShippingCharge();
@@ -65,48 +84,79 @@ async function createResellerOrder(user, body, idempotencyKey) {
       async (tx) => {
         const variants = await tx.productVariant.findMany({
           where: {
-            id: { in: body.items.map((i) => i.variantId) },
+            id: {
+              in: body.items.map((item) => item.variantId),
+            },
             isActive: true,
-            product: { status: "ACTIVE", isResellable: true },
+            product: {
+              status: "ACTIVE",
+              isResellable: true,
+            },
           },
-          include: { product: true, inventory: true },
+          include: {
+            product: true,
+            inventory: true,
+          },
         });
+
         const byId = new Map(variants.map((v) => [v.id, v]));
 
         const sellerGroups = new Map();
         const reservations = [];
+
         let itemsTotal = new D(0);
         let marginTotal = new D(0);
 
         for (const item of body.items) {
           const variant = byId.get(item.variantId);
+
           if (!variant || !variant.inventory) {
-            throw ApiError.notFound("Product not found or not available for reselling");
+            throw ApiError.notFound(
+              "Product not found or not available for reselling"
+            );
           }
+
           const product = variant.product;
+
+          // Share code must match the ordered product.
+          if (shareProductId && product.id !== shareProductId) {
+            throw ApiError.badRequest(
+              "Share code does not match the ordered product"
+            );
+          }
 
           const available =
             variant.inventory.quantityAvailable -
             variant.inventory.quantityReserved;
+
           if (available < item.quantity) {
-            throw ApiError.conflict(`Insufficient stock for ${product.name}`);
+            throw ApiError.conflict(
+              `Insufficient stock for ${product.name}`
+            );
           }
 
           const unitPrice = new D(variant.price.toString());
           const marginPerUnit = new D(item.margin);
+
           const maxMargin = unitPrice
             .mul(maxPercent)
             .div(100)
             .toDecimalPlaces(2, D.ROUND_DOWN);
+
           if (marginPerUnit.gt(maxMargin)) {
             throw ApiError.badRequest(
-              `Margin for ${product.name} cannot be more than ${maxMargin.toFixed(2)} per unit`
+              `Margin for ${product.name} cannot be more than ${maxMargin.toFixed(
+                2
+              )} per unit`
             );
           }
 
           const subtotal = unitPrice.mul(item.quantity);
+
           itemsTotal = itemsTotal.plus(subtotal);
-          marginTotal = marginTotal.plus(marginPerUnit.mul(item.quantity));
+          marginTotal = marginTotal.plus(
+            marginPerUnit.mul(item.quantity)
+          );
 
           if (!sellerGroups.has(product.sellerId)) {
             sellerGroups.set(product.sellerId, {
@@ -114,10 +164,12 @@ async function createResellerOrder(user, body, idempotencyKey) {
               items: [],
             });
           }
+
           const group = sellerGroups.get(product.sellerId);
-          // The seller is paid the product price only. The margin is not part
-          // of the seller's total.
+
+          // Seller receives product price only, not reseller margin.
           group.totalAmount = group.totalAmount.plus(subtotal);
+
           group.items.push({
             variantId: variant.id,
             productName: product.name,
@@ -127,8 +179,9 @@ async function createResellerOrder(user, body, idempotencyKey) {
             unitPrice,
             quantity: item.quantity,
             subtotal,
-            resellerMargin: marginPerUnit, // per unit, snapshot
+            resellerMargin: marginPerUnit,
           });
+
           reservations.push({
             variantId: variant.id,
             quantity: item.quantity,
@@ -136,8 +189,11 @@ async function createResellerOrder(user, body, idempotencyKey) {
           });
         }
 
-        const customerTotal = itemsTotal.plus(shippingCharge).plus(marginTotal);
-        const c = body.customer;
+        const customerTotal = itemsTotal
+          .plus(shippingCharge)
+          .plus(marginTotal);
+
+        const customer = body.customer;
 
         const order = await tx.order.create({
           data: {
@@ -147,18 +203,20 @@ async function createResellerOrder(user, body, idempotencyKey) {
             status: "PENDING_PAYMENT",
             totalAmount: customerTotal,
             currency: "INR",
+
             shippingCharge,
             resellerMarginTotal: marginTotal,
             resellerId: reseller.id,
             resellerShareId: shareId,
 
-            deliveryName: c.name,
-            deliveryPhone: c.phone,
-            deliveryAddressLine1: c.addressLine1,
-            deliveryAddressLine2: c.addressLine2 ?? null,
-            deliveryCity: c.city,
-            deliveryState: c.state,
-            deliveryPostalCode: c.postalCode,
+            deliveryName: customer.name,
+            deliveryPhone: customer.phone,
+            deliveryAddressLine1: customer.addressLine1,
+            deliveryAddressLine2:
+              customer.addressLine2 ?? null,
+            deliveryCity: customer.city,
+            deliveryState: customer.state,
+            deliveryPostalCode: customer.postalCode,
             deliveryCountry: "India",
           },
         });
@@ -174,11 +232,37 @@ async function createResellerOrder(user, body, idempotencyKey) {
           });
 
           for (const item of group.items) {
-            await tx.orderItem.create({
+            const orderItem = await tx.orderItem.create({
               data: {
                 orderId: order.id,
                 sellerOrderId: sellerOrder.id,
                 ...item,
+              },
+            });
+
+            // Create reseller earning and immutable ledger event.
+            // Both are inside the same transaction as the order.
+            const earningAmount = item.resellerMargin.mul(
+              item.quantity
+            );
+
+            await tx.resellerEarning.create({
+              data: {
+                resellerId: reseller.id,
+                orderId: order.id,
+                orderItemId: orderItem.id,
+                quantity: item.quantity,
+                amount: earningAmount,
+                status: "PENDING",
+
+                events: {
+                  create: {
+                    type: "ACCRUED",
+                    amountDelta: earningAmount,
+                    reason: "Reseller order placed",
+                    actorId: user.id,
+                  },
+                },
               },
             });
           }
@@ -205,38 +289,52 @@ async function createResellerOrder(user, body, idempotencyKey) {
           },
         });
 
-        for (const r of reservations) {
+        // Atomically reserve inventory.
+        for (const reservation of reservations) {
           const reserved = await tx.$executeRaw`
             UPDATE "inventory"
-            SET "quantityReserved" = "quantityReserved" + ${r.quantity},
+            SET "quantityReserved" = "quantityReserved" + ${reservation.quantity},
                 "updatedAt" = NOW()
-            WHERE "variantId" = ${r.variantId}
-              AND ("quantityAvailable" - "quantityReserved") >= ${r.quantity}
+            WHERE "variantId" = ${reservation.variantId}
+              AND ("quantityAvailable" - "quantityReserved") >= ${reservation.quantity}
           `;
+
           if (reserved !== 1) {
             throw ApiError.conflict(
-              `Stock changed while placing order for ${r.name}`
+              `Stock changed while placing order for ${reservation.name}`
             );
           }
         }
 
         return tx.order.findUnique({
-          where: { id: order.id },
+          where: {
+            id: order.id,
+          },
           include: {
             ...orderInclude,
-            orderStatusHistories: { orderBy: { createdAt: "desc" } },
+            orderStatusHistories: {
+              orderBy: {
+                createdAt: "desc",
+              },
+            },
           },
         });
       },
-      { maxWait: 10000, timeout: 20000 }
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      }
     );
 
-    // Notifications must never fail an order that is already saved.
+    // Notifications should not fail a saved order.
     if (typeof ordersService.notifyOrderPlaced === "function") {
       try {
         await ordersService.notifyOrderPlaced(createdOrder);
       } catch (err) {
-        console.error("Reseller order notification failed:", err.message);
+        console.error(
+          "Reseller order notification failed:",
+          err.message
+        );
       }
     }
 
@@ -244,25 +342,34 @@ async function createResellerOrder(user, body, idempotencyKey) {
   } catch (error) {
     if (error.code === "P2002") {
       const duplicate = await prisma.order.findFirst({
-        where: { userId: user.id, idempotencyKey: key },
+        where: {
+          userId: user.id,
+          idempotencyKey: key,
+        },
         include: orderInclude,
       });
+
       if (duplicate) return duplicate;
     }
+
     throw error;
   }
 }
 
-// Same flow as checkout(): create the order, then start the payment.
+// Create order, then start payment.
 async function placeOrder(user, body, idempotencyKey) {
   const paymentMethod = body.paymentMethod || "ONLINE";
 
-  // Fail before any stock is reserved if Razorpay is not configured.
+  // Check Razorpay config before reserving stock.
   if (paymentMethod === "ONLINE") {
     razorpay.assertConfigured();
   }
 
-  const order = await createResellerOrder(user, body, idempotencyKey);
+  const order = await createResellerOrder(
+    user,
+    body,
+    idempotencyKey
+  );
 
   const summary = {
     id: order.id,
@@ -275,38 +382,65 @@ async function placeOrder(user, body, idempotencyKey) {
   };
 
   if (order.status !== "PENDING_PAYMENT") {
-    return { order: summary, payment: null };
+    return {
+      order: summary,
+      payment: null,
+    };
   }
 
   if (paymentMethod === "COD") {
-    const payment = await paymentsService.startCodPaymentForOrder(order);
-    return { order: summary, payment: paymentsService.toCodDetails(payment) };
+    const payment =
+      await paymentsService.startCodPaymentForOrder(order);
+
+    return {
+      order: summary,
+      payment: paymentsService.toCodDetails(payment),
+    };
   }
 
-  const payment = await paymentsService.startPaymentForOrder(order);
-  return { order: summary, payment: paymentsService.toClientDetails(payment) };
+  const payment =
+    await paymentsService.startPaymentForOrder(order);
+
+  return {
+    order: summary,
+    payment: paymentsService.toClientDetails(payment),
+  };
 }
 
-// Only the logged-in reseller's own orders. No seller or payment details.
+// Only the logged-in reseller's own orders.
 async function listOrders(user, query) {
   const profile = await prisma.resellerProfile.findUnique({
-    where: { userId: user.id },
-    select: { id: true },
+    where: {
+      userId: user.id,
+    },
+    select: {
+      id: true,
+    },
   });
+
   if (!profile) {
     throw ApiError.notFound("Reseller profile not found");
   }
 
   const { page, limit } = query;
-  const where = { resellerId: profile.id };
+
+  const where = {
+    resellerId: profile.id,
+  };
 
   const [total, items] = await Promise.all([
-    prisma.order.count({ where }),
+    prisma.order.count({
+      where,
+    }),
+
     prisma.order.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: {
+        createdAt: "desc",
+      },
       skip: (page - 1) * limit,
       take: limit,
+
       select: {
         id: true,
         orderNumber: true,
@@ -320,6 +454,7 @@ async function listOrders(user, query) {
         deliveryCity: true,
         deliveryState: true,
         deliveryPostalCode: true,
+
         orderItems: {
           select: {
             productName: true,
@@ -333,7 +468,16 @@ async function listOrders(user, query) {
     }),
   ]);
 
-  return { items, page, limit, total };
+  return {
+    items,
+    page,
+    limit,
+    total,
+  };
 }
 
-module.exports = { createResellerOrder, placeOrder, listOrders };
+module.exports = {
+  createResellerOrder,
+  placeOrder,
+  listOrders,
+};
