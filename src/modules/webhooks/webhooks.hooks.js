@@ -2,6 +2,9 @@
 const { confirmOrder } = require("../payments/order-confirmation");
 
 const CHANGED_BY = "system:razorpay-webhook";
+const {
+  adjustEarningsForReturn,
+} = require("../reseller/reseller.earnings.adjustment");
 
 // Queue notification data. Actual DB creation happens after webhook transaction commits.
 function queueNotification(notifications, data) {
@@ -280,6 +283,7 @@ async function onRefundEvent(
     });
 
     if (updated.count === 1) {
+      await adjustEarningsForReturn(tx, ret.id, "system");
       await tx.returnStatusHistory.create({
         data: {
           returnId: ret.id,

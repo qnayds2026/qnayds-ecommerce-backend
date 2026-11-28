@@ -1,6 +1,6 @@
-
 const asyncHandler = require("../../utils/asyncHandler");
 const adminService = require("./admin.service");
+const resellerEarningsService = require("../reseller/reseller.earnings.service");
 
 async function getDashboard(req, res) {
   const data = await adminService.getDashboardSummary(
@@ -122,6 +122,32 @@ async function updateShipmentStatus(req, res) {
   });
 }
 
+async function listResellerSettlements(req, res) {
+  const data = await resellerEarningsService.listAdminSettlements(
+    req.validated.query
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Reseller settlements fetched successfully",
+    data,
+  });
+}
+
+async function updateResellerSettlement(req, res) {
+  const data = await resellerEarningsService.updateAdminSettlement(
+    req.user,
+    req.validated.params.id,
+    req.validated.body
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Reseller settlement updated successfully",
+    data,
+  });
+}
+
 module.exports = {
   getDashboard: asyncHandler(getDashboard),
   listCustomers: asyncHandler(listCustomers),
@@ -133,4 +159,6 @@ module.exports = {
   getSalesReport: asyncHandler(getSalesReport),
   listShipments,
   updateShipmentStatus,
+  listResellerSettlements: asyncHandler(listResellerSettlements),
+  updateResellerSettlement: asyncHandler(updateResellerSettlement),
 };

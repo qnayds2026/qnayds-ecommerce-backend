@@ -119,6 +119,38 @@ const salesReportQuery = z
     }
   );
 
+const listResellerSettlementsQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  status: z.enum([
+    "REQUESTED",
+    "APPROVED",
+    "REJECTED",
+    "PROCESSING",
+    "PAID",
+    "FAILED",
+  ]).optional(),
+  resellerId: z.string().trim().min(1).optional(),
+});
+
+const resellerSettlementIdParam = z.object({
+  id: z.string().trim().min(1, "Settlement ID is required"),
+});
+
+const updateResellerSettlementBody = z.object({
+  status: z.enum([
+    "APPROVED",
+    "REJECTED",
+    "PROCESSING",
+    "PAID",
+    "FAILED",
+  ]),
+  paymentReference: z.string().trim().max(150).optional(),
+  method: z.string().trim().max(50).optional(),
+  rejectionReason: z.string().trim().max(500).optional(),
+  failureReason: z.string().trim().max(500).optional(),
+});
+
 module.exports = {
   dashboardQuery,
   listCustomersQuery,
@@ -130,4 +162,7 @@ module.exports = {
   listAdminShipmentsQuery,
   adminShipmentIdParam,
   adminUpdateShipmentStatusBody,
+  listResellerSettlementsQuery,
+  resellerSettlementIdParam,
+  updateResellerSettlementBody,
 };

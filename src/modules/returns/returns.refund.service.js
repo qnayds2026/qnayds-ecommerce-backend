@@ -13,7 +13,9 @@ const returnInclude = {
   items: true,
   history: { orderBy: { createdAt: "asc" } },
 };
-
+const {
+  adjustEarningsForReturn,
+} = require("../reseller/reseller.earnings.adjustment");
 // A second refund call for these returns just returns the current record.
 const ALREADY_STARTED = ["REFUND_INITIATED", "REFUNDED", "CLOSED"];
 
@@ -155,6 +157,7 @@ async function refundReturn(user, returnId, note) {
       if (current && ALREADY_STARTED.includes(current.status)) return { done: true };
       throw ApiError.conflict("Return status changed, please refresh and try again");
     }
+
 
     await tx.returnStatusHistory.create({
       data: {

@@ -23,6 +23,9 @@ const {
   listAdminShipmentsQuery,
   adminShipmentIdParam,
   adminUpdateShipmentStatusBody,
+  listResellerSettlementsQuery,
+  resellerSettlementIdParam,
+  updateResellerSettlementBody,
 } = require("./admin.validation");
 // Admin dashboard
 router.get(
@@ -181,6 +184,26 @@ router.get(
   authorize("ADMIN"),
   validate({ query: salesReportQuery }),
   adminController.getSalesReport
+);
+
+// Admin reseller settlement management
+router.get(
+  "/reseller-settlements",
+  authenticate,
+  authorize("ADMIN"),
+  validate({ query: listResellerSettlementsQuery }),
+  adminController.listResellerSettlements
+);
+
+router.patch(
+  "/reseller-settlements/:id",
+  authenticate,
+  authorize("ADMIN"),
+  validate({
+    params: resellerSettlementIdParam,
+    body: updateResellerSettlementBody,
+  }),
+  adminController.updateResellerSettlement
 );
 
 module.exports = router;

@@ -7,6 +7,7 @@ const validate = require("../../middilewares/validateRequest");
 const controller = require("./reseller.controller");
 const validation = require("./reseller.validation");
 
+
 // A customer applies to become a reseller. Status starts as PENDING.
 router.post(
   "/profile",
@@ -78,6 +79,47 @@ router.get(
   authorize("CUSTOMER", "RESELLER"),
   validate({ query: validation.listOrdersQuery }),
   controller.listOrders
+);
+
+// Reseller earnings
+router.get(
+  "/earnings/summary",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  controller.getEarningsSummary
+);
+
+router.get(
+  "/earnings",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ query: validation.earningsQuery }),
+  controller.listEarnings
+);
+
+// Reseller settlements
+router.get(
+  "/settlements",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ query: validation.settlementsQuery }),
+  controller.listSettlements
+);
+
+router.get(
+  "/settlements/:id",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ params: validation.settlementIdParam }),
+  controller.getSettlement
+);
+
+router.post(
+  "/settlements",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ body: validation.requestSettlementBody }),
+  controller.requestSettlement
 );
 
 module.exports = router;

@@ -122,6 +122,37 @@ const createOrderBody = z.strictObject({
 
 const listOrdersQuery = z.object({ ...pagination });
 
+const earningsQuery = z.object({
+  ...pagination,
+  status: z.enum([
+    "PENDING",
+    "ELIGIBLE",
+    "IN_SETTLEMENT",
+    "SETTLED",
+    "CANCELLED",
+  ]).optional(),
+});
+
+const settlementsQuery = z.object({
+  ...pagination,
+  status: z.enum([
+    "REQUESTED",
+    "APPROVED",
+    "REJECTED",
+    "PROCESSING",
+    "PAID",
+    "FAILED",
+  ]).optional(),
+});
+
+const settlementIdParam = z.strictObject({
+  id: z.string().trim().min(1, "Settlement ID is required"),
+});
+
+const requestSettlementBody = z.strictObject({
+  bankAccountId: z.string().trim().min(1).max(64).optional(),
+});
+
 module.exports = {
   createProfileBody,
   updateProfileBody,
@@ -131,4 +162,8 @@ module.exports = {
   quoteBody,
   createOrderBody,
   listOrdersQuery,
+  earningsQuery,
+  settlementsQuery,
+  settlementIdParam,
+  requestSettlementBody,
 };
