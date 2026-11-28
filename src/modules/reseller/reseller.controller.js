@@ -57,6 +57,15 @@ const listShares = async (req, res, next) => {
   }
 };
 
+const quoteMargin = async (req, res, next) => {
+  try {
+    const data = await resellerService.quoteMargin(req.user, req.validated.body);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   createProfile,
   getProfile,
@@ -64,4 +73,5 @@ module.exports = {
   listProducts,
   createShare,
   listShares,
-};
+  quoteMargin,
+};;

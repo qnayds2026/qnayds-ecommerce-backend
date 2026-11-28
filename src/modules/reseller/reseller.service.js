@@ -225,6 +225,82 @@ async function listShares(user, query) {
   return { items, page, limit, total };
 }
 
+const { Prisma } = require("@prisma/client");
+
+const D = Prisma.Decimal;
+
+// Placeholders until the Team Lead confirms the policy.
+function getShippingCharge() {
+  const value = Number(process.env.RESELLER_SHIPPING_CHARGE);
+  return Number.isFinite(value) && value >= 0 ? new D(value) : new D(0);
+}
+
+function getMaxMarginPercent() {
+  const value = Number(process.env.RESELLER_MAX_MARGIN_PERCENT);
+  return Number.isFinite(value) && value >= 0 ? value : 50;
+}
+
+// Every amount comes from the database or server config, never from the client.
+// The client only sends the variant, the quantity and its own margin.
+async function quoteMargin(user, body) {
+  await getApprovedReseller(user);
+
+  const variant = await prisma.productVariant.findFirst({
+    where: {
+      id: body.variantId,
+      isActive: true,
+      product: { status: "ACTIVE", isResellable: true },
+    },
+    select: {
+      id: true,
+      name: true,
+      price: true,
+      inventory: { select: { quantityAvailable: true } },
+      product: { select: { id: true, name: true } },
+    },
+  });
+  if (!variant) {
+    throw ApiError.notFound("Product not found or not available for reselling");
+  }
+
+  const available = variant.inventory?.quantityAvailable ?? 0;
+  if (available < body.quantity) {
+    throw ApiError.conflict("Not enough stock for the requested quantity");
+  }
+
+  const unitPrice = new D(variant.price);
+  const marginPerUnit = new D(body.margin);
+  const maxMarginPerUnit = unitPrice
+    .mul(getMaxMarginPercent())
+    .div(100)
+    .toDecimalPlaces(2, D.ROUND_DOWN);
+
+  if (marginPerUnit.gt(maxMarginPerUnit)) {
+    throw ApiError.badRequest(
+      `Margin cannot be more than ${maxMarginPerUnit.toFixed(2)} per unit`
+    );
+  }
+
+  const itemsTotal = unitPrice.mul(body.quantity);
+  const marginTotal = marginPerUnit.mul(body.quantity);
+  const shippingCharge = getShippingCharge();
+  const customerTotal = itemsTotal.add(shippingCharge).add(marginTotal);
+
+  return {
+    product: variant.product,
+    variant: { id: variant.id, name: variant.name },
+    quantity: body.quantity,
+    currency: "INR",
+    unitPrice: unitPrice.toFixed(2),
+    marginPerUnit: marginPerUnit.toFixed(2),
+    maxMarginPerUnit: maxMarginPerUnit.toFixed(2),
+    itemsTotal: itemsTotal.toFixed(2),
+    marginTotal: marginTotal.toFixed(2),
+    shippingCharge: shippingCharge.toFixed(2),
+    customerTotal: customerTotal.toFixed(2),
+  };
+}
+
 module.exports = {
   createProfile,
   getProfile,
@@ -232,4 +308,5 @@ module.exports = {
   listProducts,
   createShare,
   listShares,
+  quoteMargin,
 };

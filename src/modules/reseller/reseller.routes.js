@@ -56,4 +56,12 @@ router.get(
   controller.listShares
 );
 
+router.post(
+  "/margin/quote",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ body: validation.quoteBody }),
+  controller.quoteMargin
+);
+
 module.exports = router;

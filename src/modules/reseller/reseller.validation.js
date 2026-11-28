@@ -46,10 +46,30 @@ const createShareBody = z.strictObject({
     .max(64, { message: "Invalid product id" }),
 });
 
+const quoteBody = z.strictObject({
+  variantId: z
+    .string()
+    .trim()
+    .min(1, { message: "Variant id is required" })
+    .max(64, { message: "Invalid variant id" }),
+  quantity: z.coerce
+    .number()
+    .int({ message: "Quantity must be a whole number" })
+    .min(1, { message: "Quantity must be at least 1" })
+    .max(100, { message: "Quantity must be at most 100" }),
+  margin: z.coerce
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, {
+      message: "Margin must be a non-negative amount with up to 2 decimals",
+    }),
+});
+
 module.exports = {
   createProfileBody,
   updateProfileBody,
   listProductsQuery,
   listSharesQuery,
   createShareBody,
+  quoteBody,
 };
