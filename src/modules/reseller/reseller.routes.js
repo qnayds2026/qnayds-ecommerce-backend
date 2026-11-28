@@ -64,4 +64,20 @@ router.post(
   controller.quoteMargin
 );
 
+router.post(
+  "/orders",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ body: validation.createOrderBody }),
+  controller.createOrder
+);
+
+router.get(
+  "/orders",
+  authenticate,
+  authorize("CUSTOMER", "RESELLER"),
+  validate({ query: validation.listOrdersQuery }),
+  controller.listOrders
+);
+
 module.exports = router;

@@ -255,7 +255,7 @@ async function quoteMargin(user, body) {
       id: true,
       name: true,
       price: true,
-      inventory: { select: { quantityAvailable: true } },
+      inventory: { select: { quantityAvailable: true, quantityReserved: true } },
       product: { select: { id: true, name: true } },
     },
   });
@@ -263,7 +263,9 @@ async function quoteMargin(user, body) {
     throw ApiError.notFound("Product not found or not available for reselling");
   }
 
-  const available = variant.inventory?.quantityAvailable ?? 0;
+  const available =
+    (variant.inventory?.quantityAvailable ?? 0) -
+    (variant.inventory?.quantityReserved ?? 0);
   if (available < body.quantity) {
     throw ApiError.conflict("Not enough stock for the requested quantity");
   }
@@ -309,4 +311,7 @@ module.exports = {
   createShare,
   listShares,
   quoteMargin,
+  getApprovedReseller,
+  getShippingCharge,
+  getMaxMarginPercent,
 };

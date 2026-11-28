@@ -1,5 +1,5 @@
 const resellerService = require("./reseller.service");
-
+const resellerOrdersService = require("./reseller.orders.service");
 const createProfile = async (req, res, next) => {
   try {
     const data = await resellerService.createProfile(req.user, req.validated.body);
@@ -65,6 +65,30 @@ const quoteMargin = async (req, res, next) => {
     next(err);
   }
 };
+const createOrder = async (req, res, next) => {
+  try {
+    const data = await resellerOrdersService.placeOrder(
+      req.user,
+      req.validated.body,
+      req.get("Idempotency-Key")
+    );
+    res.status(201).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const listOrders = async (req, res, next) => {
+  try {
+    const data = await resellerOrdersService.listOrders(
+      req.user,
+      req.validated.query
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
 
 module.exports = {
   createProfile,
@@ -74,4 +98,6 @@ module.exports = {
   createShare,
   listShares,
   quoteMargin,
-};;
+  createOrder,
+  listOrders,
+};
